@@ -11,7 +11,7 @@ import { uploadsDir } from "./routes/upload";
 import { tenantResolver } from "./middleware/tenantContext";
 import { db, storesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
-import { buildTenantUrl, extractTenantFromHost } from "@workspace/tenant-routing";
+import { buildTenantUrl, extractTenantFromHost, validateTenantSlug } from "@workspace/tenant-routing";
 
 const app: Express = express();
 app.set("trust proxy", true);
@@ -163,20 +163,11 @@ app.post("/api/waitlist", (req, res) => {
 app.use(seoRouter);
 app.use("/api", tenantResolver, router);
 
-// Serve static frontend assets in production / full-stack deployment
-const storeCandidates = [
-  path.resolve(process.cwd(), "dist"),
-  path.resolve(process.cwd(), "dist/public"),
-  path.resolve(process.cwd(), "artifacts/luxe-boutique/dist/public"),
-];
+// Serve static frontend assets for Admin Dashboard
 const adminCandidates = [
   path.resolve(process.cwd(), "dist/seller"),
   path.resolve(process.cwd(), "dist/public/seller"),
   path.resolve(process.cwd(), "artifacts/luxe-boutique-admin/dist/public"),
-];
-const landingCandidates = [
-  path.resolve(process.cwd(), "dist/landing"),
-  path.resolve(process.cwd(), "artifacts/prigid-landing"),
 ];
 
 const resolvedAdminDir = adminCandidates.find((d) => fs.existsSync(path.join(d, "index.html")));
@@ -185,108 +176,13 @@ if (resolvedAdminDir) {
   app.get(/^\/seller(\/.*)?$/, (_req, res) => {
     res.sendFile(path.join(resolvedAdminDir, "index.html"));
   });
-}
-
-app.get("/landing", (_req, res) => {
-  res.redirect("/");
-});
-
-const mobileCandidates = [
-  path.resolve(process.cwd(), "dist/mobile"),
-  path.resolve(process.cwd(), "dist/public/mobile"),
-  path.resolve(process.cwd(), "artifacts/luxe-boutique-mobile/dist"),
-];
-const resolvedMobileDir = mobileCandidates.find((d) => fs.existsSync(d));
-if (resolvedMobileDir) {
-  app.use("/mobile", express.static(resolvedMobileDir));
-}
-
-const resolvedLandingDir = landingCandidates.find((d) => fs.existsSync(path.join(d, "index.html")));
-const resolvedStoreDir = storeCandidates.find((d) => fs.existsSync(path.join(d, "index.html")));
-
-if (resolvedLandingDir && resolvedStoreDir) {
-  // If the visitor goes to '/' or '/platform'
-  app.get(["/", "/platform"], async (req, res, next) => {
-    const host = req.hostname;
-    const isStorePreview = req.query.preview === "store" || req.query.store === "true";
-
-    let isTenant = false;
-    let storeRecord = null;
-    try {
-      const hostInfo = extractTenantFromHost(host);
-      if (hostInfo.type === "custom_domain" && hostInfo.domain) {
-        [storeRecord] = await db.select().from(storesTable).where(eq(storesTable.customDomain, hostInfo.domain)).limit(1);
-        if (storeRecord) isTenant = true;
-      } else if (hostInfo.type === "subdomain" && hostInfo.slug) {
-        [storeRecord] = await db.select().from(storesTable).where(eq(storesTable.slug, hostInfo.slug)).limit(1);
-        if (storeRecord) isTenant = true;
-      }
-    } catch (err) {
-      logger.error(err, "Tenant lookup failed in landing router");
-    }
-
-    if (isTenant) {
-      if (storeRecord && (storeRecord.status === "suspended" || storeRecord.publishStatus === "SUSPENDED")) {
-        return res.status(403).send(`
-          <html>
-            <head>
-              <title>Store Suspended</title>
-              <style>
-                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #f8fafc; color: #1e293b; }
-                .card { text-align: center; padding: 2rem; border-radius: 8px; background: white; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); max-width: 400px; }
-                h1 { font-size: 24px; margin-bottom: 1rem; color: #ef4444; }
-                p { font-size: 16px; color: #64748b; line-height: 1.5; }
-              </style>
-            </head>
-            <body>
-              <div class="card">
-                <h1>Store Suspended</h1>
-                <p>This store has been suspended. Please contact Prigid Commerce Group support.</p>
-              </div>
-            </body>
-          </html>
-        `);
-      }
-      return next(); // Passes to serve storefront React app!
-    }
-
-    if (isStorePreview) {
-      const isMasterHost = !host || host.includes("localhost") || host.endsWith(".run.app") || host.endsWith(".aistudio.app");
-      if (isMasterHost) {
-        return res.redirect("/landing");
-      }
-      return next();
-    }
-
-    // Serve the standalone SaaS marketing page
-    res.sendFile(path.join(resolvedLandingDir, "index.html"));
+  // Route root and dashboard paths to the admin portal
+  app.get(["/", "/dashboard", "/login", "/register", "/settings"], (_req, res) => {
+    res.sendFile(path.join(resolvedAdminDir, "index.html"));
   });
-}
-
-if (resolvedStoreDir) {
-  // Legacy URL redirection: 301 Permanent Redirect to tenant subdomain
-  app.get(["/boutique/:slug", "/store/:slug"], async (req, res, next) => {
-    const rawSlug = req.params.slug;
-    const slug = Array.isArray(rawSlug) ? rawSlug[0] : rawSlug;
-    if (!slug) return next();
-
-    let customDomain: string | null = null;
-    try {
-      const [record] = await db.select({ customDomain: storesTable.customDomain }).from(storesTable).where(eq(storesTable.slug, slug)).limit(1);
-      if (record?.customDomain) {
-        customDomain = record.customDomain;
-      }
-    } catch {
-      // ignore lookup error
-    }
-    const targetUrl = buildTenantUrl({ slug, customDomain, protocol: req.protocol }, req.hostname);
-    return res.redirect(301, targetUrl);
-  });
-
-  app.use(express.static(resolvedStoreDir));
-  app.get("*any", (req, res, next) => {
-    if (req.path.startsWith("/api") || req.path.startsWith("/seller") || req.path.startsWith("/mobile")) return next();
-    res.sendFile(path.join(resolvedStoreDir, "index.html"));
+} else {
+  app.get("/", (_req, res) => {
+    res.json({ name: "PRIGID Commerce API & Admin Dashboard", status: "online", apiBase: "/api" });
   });
 }
 

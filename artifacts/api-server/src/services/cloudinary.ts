@@ -7,9 +7,9 @@ export async function getCloudinaryConfig(storeId: string) {
   const rows = await db.select().from(appSettingsTable).where(eq(appSettingsTable.storeId, storeId));
   const settings = Object.fromEntries(rows.map((row) => [row.key, row.value]));
 
-  const cloudName = (process.env.CLOUDINARY_CLOUD_NAME || settings.cloudinary_cloud_name || "").trim();
-  const apiKey = (process.env.CLOUDINARY_API_KEY || settings.cloudinary_api_key || "").trim();
-  let rawSecret = (process.env.CLOUDINARY_API_SECRET || settings.cloudinary_api_secret || "").trim();
+  const cloudName = (settings.cloudinary_cloud_name || process.env.CLOUDINARY_CLOUD_NAME || "").trim();
+  const apiKey = (settings.cloudinary_api_key || process.env.CLOUDINARY_API_KEY || "").trim();
+  let rawSecret = (settings.cloudinary_api_secret || process.env.CLOUDINARY_API_SECRET || "").trim();
 
   if (rawSecret && isEncryptedCredential(rawSecret)) {
     try {
@@ -47,7 +47,8 @@ export async function testCloudinaryConnection(storeId: string) {
   return { ok: true, cloudName: config.cloudName, ping: res };
 }
 
-export async function uploadToCloudinary(filePath: string, storeId: string, folder = "luxe_boutique_uploads") {
+export async function uploadToCloudinary(filePath: string, storeId: string, folder?: string) {
+  const targetFolder = folder || `tenants/${storeId}/uploads`;
   const config = await getCloudinaryConfig(storeId);
   if (!config.isConfigured) {
     throw new Error("Cloudinary credentials not configured.");
@@ -61,7 +62,7 @@ export async function uploadToCloudinary(filePath: string, storeId: string, fold
   });
 
   const uploadRes = await cloudinary.uploader.upload(filePath, {
-    folder,
+    folder: targetFolder,
     resource_type: "auto",
   });
 

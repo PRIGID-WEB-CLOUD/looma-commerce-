@@ -16,43 +16,32 @@ async function exists(p) {
 }
 
 async function run() {
-  console.log("==> [1/4] Building @workspace/api-server...");
+  console.log("==> [1/3] Building @workspace/api-server...");
   execSync("npm run build --workspace=@workspace/api-server", {
     cwd: rootDir,
     stdio: "inherit",
     env: { ...process.env, NODE_ENV: "production" },
   });
 
-  console.log("==> [2/4] Building @workspace/luxe-boutique (Storefront)...");
-  execSync("npm run build --workspace=@workspace/luxe-boutique", {
-    cwd: rootDir,
-    stdio: "inherit",
-    env: { ...process.env, NODE_ENV: "production", PORT: "3000", BASE_PATH: "/" },
-  });
-
-  console.log("==> [3/4] Building @workspace/luxe-boutique-admin (Admin Portal)...");
+  console.log("==> [2/3] Building @workspace/luxe-boutique-admin (Admin Portal)...");
   execSync("npm run build --workspace=@workspace/luxe-boutique-admin", {
     cwd: rootDir,
     stdio: "inherit",
     env: { ...process.env, NODE_ENV: "production", PORT: "3000", BASE_PATH: "/seller/" },
   });
 
-  console.log("==> [4/4] Assembling unified dist/ directory...");
+  console.log("==> [3/3] Assembling unified dist/ directory...");
   await rm(distDir, { recursive: true, force: true });
   await mkdir(distDir, { recursive: true });
 
-  const storeDist = path.resolve(rootDir, "artifacts/luxe-boutique/dist/public");
-  if (await exists(storeDist)) {
-    console.log("  -> Copying Storefront files to dist/...");
-    await cp(storeDist, distDir, { recursive: true });
-  }
-
   const adminDist = path.resolve(rootDir, "artifacts/luxe-boutique-admin/dist/public");
   if (await exists(adminDist)) {
-    console.log("  -> Copying Admin Portal files to dist/seller/...");
+    console.log("  -> Copying Admin Portal files to dist/seller/ and root dist/...");
     const distAdmin = path.resolve(distDir, "seller");
     await mkdir(distAdmin, { recursive: true });
     await cp(adminDist, distAdmin, { recursive: true });
+    // Also copy to root dist so root serves admin portal
+    await cp(adminDist, distDir, { recursive: true });
   }
 
   const serverDist = path.resolve(rootDir, "artifacts/api-server/dist");
@@ -63,31 +52,7 @@ async function run() {
     await cp(serverDist, distServer, { recursive: true });
   }
 
-  const landingSrc = path.resolve(rootDir, "artifacts/prigid-landing");
-  if (await exists(landingSrc)) {
-    console.log("  -> Copying SaaS Landing Page to dist/landing/...");
-    const distLanding = path.resolve(distDir, "landing");
-    await mkdir(distLanding, { recursive: true });
-    await cp(landingSrc, distLanding, { recursive: true });
-  }
 
-  const mobileStaticBuild = path.resolve(rootDir, "artifacts/luxe-boutique-mobile/static-build");
-  if (await exists(mobileStaticBuild)) {
-    console.log("  -> Copying Mobile App Build to dist/mobile/...");
-    const distMobile = path.resolve(distDir, "mobile");
-    await mkdir(distMobile, { recursive: true });
-    await cp(mobileStaticBuild, distMobile, { recursive: true });
-
-    const mobileAppJson = path.resolve(rootDir, "artifacts/luxe-boutique-mobile/app.json");
-    if (await exists(mobileAppJson)) {
-      await cp(mobileAppJson, path.resolve(distMobile, "app.json"));
-    }
-
-    const mobilePkgJson = path.resolve(rootDir, "artifacts/luxe-boutique-mobile/package.json");
-    if (await exists(mobilePkgJson)) {
-      await cp(mobilePkgJson, path.resolve(distMobile, "package.json"));
-    }
-  }
 
   // Copy .env.example into dist/ and dist/server/
   const envExample = path.resolve(rootDir, ".env.example");

@@ -152,8 +152,9 @@ export default function AdminBlogEditorPage() {
   };
 
   const stCfg = STATUS_CFG[form.status] ?? STATUS_CFG.DRAFT;
-  const seoTitle = form.seoTitle || (form.title ? `${form.title} | Luxe Boutique` : "Post | Luxe Boutique");
+  const seoTitle = form.seoTitle || (form.title || "Editorial Post");
   const seoSlug = form.slug || slugify(form.title || "post");
+  const blogOrigin = typeof window !== "undefined" ? window.location.origin : "https://prigidcommerce.com";
   const seoDesc = form.seoDescription || form.excerpt.slice(0, 120);
   const wordCount = form.content.trim() ? form.content.trim().split(/\s+/).length : 0;
   const readTime = Math.max(1, Math.ceil(wordCount / 200));
@@ -428,7 +429,7 @@ export default function AdminBlogEditorPage() {
                 <h3 className="text-[11px] font-[Manrope] font-bold tracking-widest uppercase text-[#45464d] mb-6">Search Engine Preview</h3>
                 <div className="p-4 bg-white border border-[#c6c6cd] rounded-lg">
                   <p className="text-[#1a0dab] text-base hover:underline cursor-pointer font-medium truncate">{seoTitle}</p>
-                  <p className="text-[#006621] text-xs mb-1">https://luxeboutique.com/blog/{seoSlug}</p>
+                  <p className="text-[#006621] text-xs mb-1">{blogOrigin}/blog/{seoSlug}</p>
                   <p className="text-[#45464d] text-xs line-clamp-2">{seoDesc || "No description yet…"}</p>
                 </div>
                 <button type="button" onClick={() => setShowSeo(v => !v)}
@@ -440,7 +441,7 @@ export default function AdminBlogEditorPage() {
                     <div>
                       <label className="text-[10px] font-[Manrope] font-bold uppercase tracking-widest text-[#45464d] block mb-1">SEO Title</label>
                       <input className="w-full bg-[#f8f9ff] border border-[#c6c6cd] rounded-lg px-3 py-2 text-sm font-[Manrope] outline-none focus:border-black"
-                        placeholder={`${form.title} | Luxe Boutique`}
+                        placeholder={form.title || "Post SEO Title"}
                         value={form.seoTitle} onChange={e => setForm(f => ({ ...f, seoTitle: e.target.value }))} />
                     </div>
                     <div>

@@ -8,7 +8,7 @@ import { z } from "zod/v4";
 export const storesTable = pgTable("stores", {
   id:                    text("id").primaryKey(),
   slug:                  text("slug").notNull().unique(),
-  name:                  text("name").notNull().default("Luxe Boutique Ateliers"),
+  name:                  text("name").notNull().default("Flagship Boutique"),
   ownerId:               text("owner_id"), // Will be updated after usersTable is defined
   customDomain:          text("custom_domain").unique(),
   planTier:              text("plan_tier").notNull().default("starter"), // starter | growth | enterprise
@@ -39,7 +39,7 @@ export const usersTable = pgTable("users", {
   passwordResetExpiry: timestamp("password_reset_expiry"),
   createdAt:           timestamp("created_at").notNull().defaultNow(),
 }, (table) => [
-  check("users_role_check", sql`${table.role} in ('CUSTOMER', 'ADMIN', 'SUPER_ADMIN')`),
+  check("users_role_check", sql`${table.role} in ('CUSTOMER', 'ADMIN', 'SUPER_ADMIN', 'PLATFORM_ADMIN')`),
   uniqueIndex("users_store_email_idx").on(table.storeId, table.email),
 ]);
 

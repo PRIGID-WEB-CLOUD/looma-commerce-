@@ -10,13 +10,14 @@ function sessionDigest(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
-export type UserRole = "CUSTOMER" | "ADMIN" | "SUPER_ADMIN";
+export type UserRole = "CUSTOMER" | "ADMIN" | "SUPER_ADMIN" | "PLATFORM_ADMIN";
 
 export interface StoredUser {
   id: string;
   name: string;
   email: string;
   role: UserRole;
+  storeId?: string | null;
   teamRole?: "Owner" | "Admin" | "Editor" | "Viewer";
 }
 
@@ -28,17 +29,21 @@ declare global {
   }
 }
 
-export async function resolveTeamRole(email: string, systemRole: UserRole, storeId?: string): Promise<"Owner" | "Admin" | "Editor" | "Viewer"> {
-  let query = db.select({ role: teamMembersTable.role })
-    .from(teamMembersTable)
-    .where(eq(teamMembersTable.email, email));
-  
-  if (storeId) {
-    query = query.where(and(eq(teamMembersTable.email, email), eq(teamMembersTable.storeId, storeId))) as any;
+export async function resolveTeamRole(email: string, systemRole: UserRole, storeId?: string | null): Promise<"Owner" | "Admin" | "Editor" | "Viewer"> {
+  if (systemRole === "PLATFORM_ADMIN" || systemRole === "SUPER_ADMIN") {
+    return "Owner";
   }
 
-  const [member] = await query.limit(1);
-  
+  const filter = storeId
+    ? and(eq(teamMembersTable.email, email), eq(teamMembersTable.storeId, storeId))
+    : eq(teamMembersTable.email, email);
+
+  const [member] = await db
+    .select({ role: teamMembersTable.role })
+    .from(teamMembersTable)
+    .where(filter)
+    .limit(1);
+
   if (member) {
     const r = member.role.trim().toLowerCase();
     if (r === "owner") return "Owner";
@@ -47,7 +52,6 @@ export async function resolveTeamRole(email: string, systemRole: UserRole, store
     if (r === "viewer") return "Viewer";
   }
 
-  if (systemRole === "SUPER_ADMIN") return "Owner";
   return "Admin";
 }
 
@@ -57,6 +61,7 @@ function toStoredUser(user: typeof usersTable.$inferSelect, teamRole?: "Owner" |
     name: user.name,
     email: user.email,
     role: user.role as UserRole,
+    storeId: user.storeId,
     teamRole,
   };
 }
@@ -74,24 +79,19 @@ function extractToken(req: Request): string | undefined {
 export async function getSessionUser(req: Request, storeId?: string): Promise<StoredUser | null> {
   const token = extractToken(req);
   if (!token) return null;
-  
-  let filters = eq(sessionsTable.token, sessionDigest(token));
-  if (storeId) {
-    filters = and(filters, eq(sessionsTable.storeId, storeId));
-  }
 
   const rows = await db
     .select({ user: usersTable, session: sessionsTable })
     .from(sessionsTable)
     .innerJoin(usersTable, eq(sessionsTable.userId, usersTable.id))
-    .where(filters)
+    .where(eq(sessionsTable.token, sessionDigest(token)))
     .limit(1);
   const row = rows[0];
   if (!row) return null;
   if (new Date() > row.session.expiresAt) return null;
-  
-  // Cross-tenant check
-  if (storeId && row.user.role !== "SUPER_ADMIN" && row.user.storeId !== storeId) {
+
+  // Cross-tenant isolation: only PLATFORM_ADMIN may operate across tenants
+  if (storeId && row.user.role !== "PLATFORM_ADMIN" && (row.user.storeId !== storeId || row.session.storeId !== storeId)) {
     return null;
   }
 
@@ -104,33 +104,27 @@ export async function requireAdmin(req: TenantRequest, res: Response, next: Next
   const token = extractToken(req);
   if (!token) return res.status(401).json({ error: "Authentication required." });
 
-  // If a store was resolved, ensure the user belongs to this store
   const storeId = req.storeId;
-  
-  let filters = eq(sessionsTable.token, sessionDigest(token));
-  if (storeId) {
-    filters = and(filters, eq(sessionsTable.storeId, storeId));
-  }
 
-  const query = db
+  const rows = await db
     .select({ user: usersTable, expiresAt: sessionsTable.expiresAt, sessionStoreId: sessionsTable.storeId })
     .from(sessionsTable)
     .innerJoin(usersTable, eq(sessionsTable.userId, usersTable.id))
-    .where(filters);
+    .where(eq(sessionsTable.token, sessionDigest(token)))
+    .limit(1);
 
-  const rows = await query.limit(1);
   const row = rows[0];
 
   if (!row) return res.status(401).json({ error: "Session expired or invalid for this store — please log in again." });
   if (new Date() > row.expiresAt) return res.status(401).json({ error: "Session expired — please log in again." });
 
-  // Multi-tenant check: User must belong to the resolved store OR be a global SUPER_ADMIN
-  if (row.user.role !== "SUPER_ADMIN" && storeId && row.user.storeId !== storeId) {
+  // Multi-tenant check: User & session must belong to the resolved store unless PLATFORM_ADMIN
+  if (row.user.role !== "PLATFORM_ADMIN" && storeId && (row.user.storeId !== storeId || row.sessionStoreId !== storeId)) {
     return res.status(403).json({ error: "Access Denied: You do not have permission for this store." });
   }
 
   const systemRole = row.user.role as UserRole;
-  if (systemRole !== "ADMIN" && systemRole !== "SUPER_ADMIN") {
+  if (systemRole !== "ADMIN" && systemRole !== "SUPER_ADMIN" && systemRole !== "PLATFORM_ADMIN") {
     return res.status(403).json({ error: "Admin access required." });
   }
 
@@ -190,6 +184,37 @@ export async function requireSuperAdmin(req: TenantRequest, res: Response, next:
   const token = extractToken(req);
   if (!token) return res.status(401).json({ error: "Authentication required." });
 
+  const storeId = req.storeId;
+  const rows = await db
+    .select({ user: usersTable, expiresAt: sessionsTable.expiresAt, sessionStoreId: sessionsTable.storeId })
+    .from(sessionsTable)
+    .innerJoin(usersTable, eq(sessionsTable.userId, usersTable.id))
+    .where(eq(sessionsTable.token, sessionDigest(token)))
+    .limit(1);
+
+  const row = rows[0];
+  if (!row) return res.status(401).json({ error: "Session expired — please log in again." });
+  if (new Date() > row.expiresAt) return res.status(401).json({ error: "Session expired — please log in again." });
+
+  if (row.user.role !== "PLATFORM_ADMIN" && storeId && (row.user.storeId !== storeId || row.sessionStoreId !== storeId)) {
+    return res.status(403).json({ error: "Access Denied: You do not have permission for this store." });
+  }
+
+  const systemRole = row.user.role as UserRole;
+  const teamRole = await resolveTeamRole(row.user.email, systemRole, storeId || row.user.storeId);
+
+  if (teamRole !== "Owner") {
+    return res.status(403).json({ error: "Super admin / Owner access required." });
+  }
+
+  req.adminUser = toStoredUser(row.user, teamRole);
+  return next();
+}
+
+export async function requirePlatformAdmin(req: TenantRequest, res: Response, next: NextFunction) {
+  const token = extractToken(req);
+  if (!token) return res.status(401).json({ error: "Authentication required." });
+
   const rows = await db
     .select({ user: usersTable, expiresAt: sessionsTable.expiresAt })
     .from(sessionsTable)
@@ -201,13 +226,10 @@ export async function requireSuperAdmin(req: TenantRequest, res: Response, next:
   if (!row) return res.status(401).json({ error: "Session expired — please log in again." });
   if (new Date() > row.expiresAt) return res.status(401).json({ error: "Session expired — please log in again." });
 
-  const systemRole = row.user.role as UserRole;
-  const teamRole = await resolveTeamRole(row.user.email, systemRole);
-
-  if (teamRole !== "Owner") {
-    return res.status(403).json({ error: "Super admin / Owner access required." });
+  if (row.user.role !== "PLATFORM_ADMIN") {
+    return res.status(403).json({ error: "Platform administration access required." });
   }
 
-  req.adminUser = toStoredUser(row.user, teamRole);
+  req.adminUser = toStoredUser(row.user, "Owner");
   return next();
 }

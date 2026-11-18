@@ -31,20 +31,19 @@ export async function isUserAdminOfStore(req: Request, storeId: string): Promise
 
   try {
     const rows = await db
-      .select({ user: usersTable })
+      .select({ user: usersTable, sessionStoreId: sessionsTable.storeId })
       .from(sessionsTable)
       .innerJoin(usersTable, eq(sessionsTable.userId, usersTable.id))
-      .where(and(
-        eq(sessionsTable.token, sessionDigest(token)),
-        eq(sessionsTable.storeId, storeId)
-      ))
+      .where(eq(sessionsTable.token, sessionDigest(token)))
       .limit(1);
 
     const row = rows[0];
     if (!row) return false;
-    
+
     const role = row.user.role?.toUpperCase();
-    return role === "ADMIN" || role === "SUPER_ADMIN" || role === "PLATFORM_ADMIN";
+    if (role === "PLATFORM_ADMIN") return true;
+    if (row.user.storeId !== storeId || row.sessionStoreId !== storeId) return false;
+    return role === "ADMIN" || role === "SUPER_ADMIN";
   } catch (err) {
     logger.error({ err, storeId }, "Error checking admin status");
     return false;
@@ -78,27 +77,31 @@ export async function tenantResolver(req: TenantRequest, res: Response, next: Ne
   req.tenantInfo = tenantInfo;
 
   const storeIdHeader = (req.headers["x-store-id"] || req.query.storeId) as string;
-  const pubKeyHeader = (req.headers["x-publishable-key"] || req.query.publishableKey) as string;
+  const pubKeyHeader = (req.headers["x-publishable-key"] || req.query.publishableKey || req.headers["x-api-key"]) as string;
+  const apiKeyAuth = extractToken(req);
   const querySlug = req.query.store as string | undefined;
 
   try {
     const allStores = await db.select().from(storesTable);
     let storeRecord: (typeof storesTable.$inferSelect) | undefined;
 
-    // 1. Resolve by Tenant Subdomain
-    if (tenantInfo.type === "subdomain" && tenantInfo.slug) {
-      const sanitizedSlug = sanitizeTenantSlug(tenantInfo.slug);
-      storeRecord = allStores.find((s: any) => s.slug === sanitizedSlug);
-      
-      if (!storeRecord) {
-        return res.status(404).json({
-          error: "Store Not Found",
-          code: "TENANT_NOT_FOUND",
-          message: `No active boutique found for subdomain "${tenantInfo.slug}".`,
-        });
-      }
+    // 1. Resolve by explicit storeId header or query
+    if (storeIdHeader) {
+      storeRecord = allStores.find((s: any) => s.id === storeIdHeader);
     }
-    // 2. Resolve by Custom Domain
+    // 2. Resolve by publishable key or API key header
+    else if (pubKeyHeader) {
+      storeRecord = allStores.find((s: any) => s.publishableKey === pubKeyHeader || s.publishable_key === pubKeyHeader || s.secretKeyHash === pubKeyHeader);
+    }
+    // 3. Resolve by Bearer token API key
+    else if (apiKeyAuth) {
+      storeRecord = allStores.find((s: any) => s.secretKeyHash === apiKeyAuth || s.publishableKey === apiKeyAuth);
+    }
+    // 4. Resolve by query slug in development/preview
+    else if (querySlug && validateTenantSlug(querySlug)) {
+      storeRecord = allStores.find((s: any) => s.slug === querySlug);
+    }
+    // 5. Resolve by custom domain if present
     else if (tenantInfo.type === "custom_domain" && tenantInfo.domain) {
       const domainToMatch = tenantInfo.domain.toLowerCase().replace(/^www\./, "");
       storeRecord = allStores.find((s: any) => {
@@ -106,52 +109,17 @@ export async function tenantResolver(req: TenantRequest, res: Response, next: Ne
         const normalized = s.customDomain.toLowerCase().trim().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0].split(":")[0];
         return normalized === domainToMatch || s.customDomain.toLowerCase() === tenantInfo.domain;
       });
-
-      if (!storeRecord) {
-        return res.status(404).json({
-          error: "Store Not Found",
-          code: "CUSTOM_DOMAIN_NOT_MAPPED",
-          message: `No active boutique found for custom domain "${tenantInfo.domain}".`,
-        });
-      }
     }
-    // 3. Resolve by explicit headers (e.g. mobile app, POS, or internal authenticated calls)
-    else if (storeIdHeader) {
-      storeRecord = allStores.find((s: any) => s.id === storeIdHeader);
-    } else if (pubKeyHeader) {
-      storeRecord = allStores.find((s: any) => s.publishableKey === pubKeyHeader || s.publishable_key === pubKeyHeader);
-    }
-    // 4. Resolve by query parameter in development/preview
-    else if (querySlug && validateTenantSlug(querySlug)) {
-      storeRecord = allStores.find((s: any) => s.slug === querySlug);
-    }
-    // 5. Master domain request with cookie or active session
-    else if (tenantInfo.type === "master") {
-      const cookieSlug = req.cookies?.prigid_store_slug;
-      if (cookieSlug && validateTenantSlug(cookieSlug)) {
-        storeRecord = allStores.find((s: any) => s.slug === cookieSlug);
-      }
-      
-      // If not resolved by cookie, check if caller's session token maps to an authoritative store
-      if (!storeRecord) {
-        const token = extractToken(req);
-        if (token) {
-          const hashed = sessionDigest(token);
-          const [session] = await db.select().from(sessionsTable)
-            .where(or(eq(sessionsTable.token, token), eq(sessionsTable.token, hashed)))
-            .limit(1);
-          if (session?.storeId) {
-            storeRecord = allStores.find((s: any) => s.id === session.storeId);
-          }
-        }
-      }
+    // 6. Fallback to default active store (store-001 or first available store) so external marketplace proxies work seamlessly without subdomains
+    if (!storeRecord && allStores.length > 0) {
+      storeRecord = allStores.find((s: any) => s.id === "store-001" || s.slug === "luxe-boutique") || allStores[0];
     }
 
     if (!storeRecord) {
       return res.status(404).json({
         error: "Tenant Not Found",
         code: "TENANT_RESOLUTION_FAILED",
-        message: "Unable to identify the store tenant for this request. Please access via the boutique's dedicated subdomain.",
+        message: "Unable to identify the store tenant for this request.",
       });
     }
 

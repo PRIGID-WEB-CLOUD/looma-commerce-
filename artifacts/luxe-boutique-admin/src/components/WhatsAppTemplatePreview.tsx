@@ -168,7 +168,7 @@ export function WhatsAppPhoneFrame({
               <span className="material-symbols-outlined text-sm cursor-pointer opacity-80">arrow_back</span>
               <div className="relative">
                 <div className="w-8 h-8 rounded-full bg-slate-900 text-[#C5A880] border border-[#C5A880]/40 flex items-center justify-center font-serif text-[10px] font-bold tracking-widest shadow-inner">
-                  LUXE
+                  VIP
                 </div>
                 <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-[#25D366] rounded-full border border-[#075e54] flex items-center justify-center">
                   <span className="material-symbols-outlined text-[8px] text-white font-bold">check</span>
@@ -176,7 +176,7 @@ export function WhatsAppPhoneFrame({
               </div>
               <div>
                 <div className="flex items-center gap-1">
-                  <span className="font-bold text-xs leading-tight">Luxe Boutique</span>
+                  <span className="font-bold text-xs leading-tight">Store Concierge</span>
                   <span className="material-symbols-outlined text-[12px] text-[#25D366]">verified</span>
                 </div>
                 <p className="text-[9px] text-emerald-100/80 leading-none">Official Business Account</p>

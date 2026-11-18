@@ -45,11 +45,13 @@ async function getCommerceMetaCreds(storeId: string) {
 }
 
 const mediaStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    if (!fs.existsSync(uploadsDir)) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
+  destination: (req: TenantRequest, _file, cb) => {
+    const safeStoreSegment = (req.storeId || "shared").replace(/[^a-zA-Z0-9_-]/g, "_");
+    const targetDir = path.join(uploadsDir, safeStoreSegment);
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
     }
-    cb(null, uploadsDir);
+    cb(null, targetDir);
   },
   filename: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase() || ".mp4";
@@ -58,6 +60,27 @@ const mediaStorage = multer.diskStorage({
     cb(null, uniqueName);
   },
 });
+
+function toUploadPublicPath(filePath: string): string {
+  const rel = path.relative(uploadsDir, filePath).split(path.sep).join("/");
+  return `/api/uploads/${rel}`;
+}
+
+function resolveLocalUploadPath(rawUrl: string, storeId?: string): string | null {
+  const cleanRel = rawUrl.replace(/^\/?api\/uploads\//, "").replace(/^\/+/, "");
+  const safeStoreSegment = (storeId || "shared").replace(/[^a-zA-Z0-9_-]/g, "_");
+  const candidates = [
+    path.join(uploadsDir, cleanRel),
+    path.join(uploadsDir, safeStoreSegment, path.basename(cleanRel)),
+    path.join(uploadsDir, path.basename(cleanRel)),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+      return candidate;
+    }
+  }
+  return null;
+}
 
 const mediaUpload = multer({
   storage: mediaStorage,
@@ -293,6 +316,8 @@ router.get("/facebook/catalog/feed.xml", async (req: TenantRequest, res) => {
     return `<![CDATA[${clean}]]>`;
   };
 
+  const storeBrandName = req.store?.name || "Boutique";
+  const storeBrandUpper = escapeXml(storeBrandName.toUpperCase());
   const xmlItems = filteredRows.map((p: any) => {
     const pId = escapeXml(p.id);
     const pName = xmlCdata(p.name);
@@ -301,7 +326,7 @@ router.get("/facebook/catalog/feed.xml", async (req: TenantRequest, res) => {
     const pImage = xmlCdata(p.imageUrl || `${baseUrl}/placeholder.jpg`);
     const pCategory = xmlCdata(p.categoryName || "Apparel & Accessories");
     const pStock = (p.stock ?? 0) > 0 ? "in stock" : "out of stock";
-    const pPrice = `${Number(p.price || 0).toFixed(2)} EUR`;
+    const pPrice = `${Number(p.price || 0).toFixed(2)} ${escapeXml(req.store?.currency || "USD")}`;
 
     return `    <item>
       <g:id>${pId}</g:id>
@@ -309,7 +334,7 @@ router.get("/facebook/catalog/feed.xml", async (req: TenantRequest, res) => {
       <g:description>${pDesc}</g:description>
       <g:link>${pLink}</g:link>
       <g:image_link>${pImage}</g:image_link>
-      <g:brand>LUXE BOUTIQUE</g:brand>
+      <g:brand>${storeBrandUpper}</g:brand>
       <g:condition>new</g:condition>
       <g:availability>${pStock}</g:availability>
       <g:price>${pPrice}</g:price>
@@ -320,7 +345,7 @@ router.get("/facebook/catalog/feed.xml", async (req: TenantRequest, res) => {
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">
   <channel>
-    <title>Luxe Boutique Meta Commerce Catalog Feed</title>
+    <title>${escapeXml(storeBrandName)} Meta Commerce Catalog Feed</title>
     <link>${escapeXml(baseUrl)}</link>
     <description>Live product catalog feed for Facebook Shop and Instagram Shopping</description>
 ${xmlItems}
@@ -585,7 +610,7 @@ router.post("/facebook/catalog/products", async (req: TenantRequest, res) => {
     condition = "new",
     imageUrl,
     link,
-    brand = "LUXE BOUTIQUE",
+    brand = (req.store?.name || "Boutique").toUpperCase(),
     category = "Apparel & Accessories"
   } = req.body as {
     retailerId?: string;
@@ -836,6 +861,9 @@ router.post("/facebook/catalog/sync", async (req: TenantRequest, res) => {
     return res.status(400).json({ error: "No active products matching the sync rules were found." });
   }
 
+  const storeBrand = (req.store?.name || "Boutique").toUpperCase();
+  const storeCurrency = req.store?.currency || "USD";
+
   // Build Facebook Catalog Batch API payload
   const buildRequests = (method: "CREATE" | "UPDATE") => filteredRows.map((p: any) => {
     const pId = String(p.id);
@@ -855,10 +883,10 @@ router.post("/facebook/catalog/sync", async (req: TenantRequest, res) => {
         description:  String(p.description || p.name),
         availability: (p.stock ?? 0) > 0 ? "in stock" : "out of stock",
         condition:    "new",
-        price:        `${Number(p.price || 0).toFixed(2)} EUR`,
+        price:        `${Number(p.price || 0).toFixed(2)} ${storeCurrency}`,
         link:         pLink,
         image_link:   pImage,
-        brand:        "LUXE BOUTIQUE",
+        brand:        storeBrand,
         google_product_category: p.categoryName ?? "Apparel & Accessories",
       },
     };
@@ -1124,10 +1152,9 @@ router.post("/facebook/reels/publish", (req, res, next) => {
   } else if (videoUrl && videoUrl.trim().length > 0) {
     const trimmed = videoUrl.trim();
     if (trimmed.startsWith("/") || trimmed.startsWith("/api/uploads/")) {
-      const fileName = path.basename(trimmed);
-      const possiblePath = path.join(uploadsDir, fileName);
-      if (fs.existsSync(possiblePath)) {
-        localFilePath = possiblePath;
+      const foundPath = resolveLocalUploadPath(trimmed, storeId);
+      if (foundPath) {
+        localFilePath = foundPath;
       } else {
         remoteVideoUrl = resolveInstagramPublicUrl(req, trimmed);
       }
@@ -1233,7 +1260,7 @@ router.post("/facebook/reels/publish", (req, res, next) => {
         id: randomUUID(),
         storeId,
         caption: description || title || "Facebook Reel",
-        imageUrl: localFilePath ? `/api/uploads/${path.basename(localFilePath)}` : (remoteVideoUrl || null),
+        imageUrl: localFilePath ? toUploadPublicPath(localFilePath) : (remoteVideoUrl || null),
         postType: "Reel",
         status: "Published",
         createdAt: new Date(),
@@ -1325,10 +1352,9 @@ router.post("/facebook/stories/publish", (req, res, next) => {
   } else if (mediaUrl && mediaUrl.trim().length > 0) {
     const trimmed = mediaUrl.trim();
     if (trimmed.startsWith("/") || trimmed.startsWith("/api/uploads/")) {
-      const fileName = path.basename(trimmed);
-      const possiblePath = path.join(uploadsDir, fileName);
-      if (fs.existsSync(possiblePath)) {
-        localFilePath = possiblePath;
+      const foundPath = resolveLocalUploadPath(trimmed, storeId);
+      if (foundPath) {
+        localFilePath = foundPath;
       } else {
         remoteMediaUrl = resolveInstagramPublicUrl(req, trimmed);
       }
@@ -1421,7 +1447,7 @@ router.post("/facebook/stories/publish", (req, res, next) => {
           id: randomUUID(),
           storeId,
           caption: caption || "Facebook Video Story",
-          imageUrl: localFilePath ? `/api/uploads/${path.basename(localFilePath)}` : (remoteMediaUrl || null),
+          imageUrl: localFilePath ? toUploadPublicPath(localFilePath) : (remoteMediaUrl || null),
           postType: "Story",
           status: "Published",
           createdAt: new Date(),
@@ -1443,7 +1469,7 @@ router.post("/facebook/stories/publish", (req, res, next) => {
       // 1. Upload unpublished photo to /{page_id}/photos with published=false
       let photoPublicUrl = remoteMediaUrl;
       if (localFilePath) {
-        photoPublicUrl = resolveInstagramPublicUrl(req, `/api/uploads/${path.basename(localFilePath)}`);
+        photoPublicUrl = resolveInstagramPublicUrl(req, toUploadPublicPath(localFilePath));
       }
 
       if (!photoPublicUrl) {
@@ -1644,7 +1670,7 @@ router.post("/facebook/instagram/publish", (req, res, next) => {
   if (isVideoFile || isReels) {
     // Video handling for Reels / Stories
     if (req.file) {
-      mediaUrl = resolveInstagramPublicUrl(req, `/api/uploads/${path.basename(req.file.path)}`);
+      mediaUrl = resolveInstagramPublicUrl(req, toUploadPublicPath(req.file.path));
     } else if (rawUrl) {
       if (rawUrl.startsWith("/") || rawUrl.startsWith("/api/uploads/")) {
         mediaUrl = resolveInstagramPublicUrl(req, rawUrl);

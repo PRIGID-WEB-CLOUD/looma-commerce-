@@ -52,10 +52,10 @@ export default defineConfig({
         target: "http://127.0.0.1:5001",
         changeOrigin: true,
         configure: (proxy) => {
-          proxy.on("error", (_err, _req, res) => {
+          proxy.on("error", (err: any, _req, res) => {
             if (res && "writeHead" in res && !res.headersSent) {
               res.writeHead(503, { "Content-Type": "application/json" });
-              res.end(JSON.stringify({ error: "Backend API warming up. Please retry." }));
+              res.end(JSON.stringify({ error: "Backend API warming up. Please retry.", code: "BACKEND_WARMING_UP" }));
             }
           });
         },

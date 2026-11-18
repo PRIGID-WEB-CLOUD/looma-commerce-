@@ -270,7 +270,7 @@ export class StripePaymentProvider implements IPaymentProvider {
             "line_items[0][price_data][currency]": curr,
             "line_items[0][price_data][unit_amount]": String(amt),
             "line_items[0][price_data][product_data][name]": params.items && params.items.length > 0
-              ? `Luxe Boutique Order (${params.items.map(i => `${i.quantity}x ${i.name}`).join(", ")})`
+              ? `${(params.metadata?.storeName as string) || "Boutique"} Order (${params.items.map(i => `${i.quantity}x ${i.name}`).join(", ")})`
               : `Order ${params.reference}`,
             "line_items[0][quantity]": "1",
           };

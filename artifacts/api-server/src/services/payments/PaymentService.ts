@@ -69,7 +69,10 @@ export class PaymentService {
     return provider;
   }
 
-  async ensureStore(storeId = "store-main", name = "Luxe Boutique Ateliers"): Promise<string> {
+  async ensureStore(storeId: string, name = "Boutique"): Promise<string> {
+    if (!storeId) {
+      throw Object.assign(new Error("Store context is required."), { statusCode: 400 });
+    }
     try {
       if (pool) {
         await pool.query(`
@@ -153,10 +156,13 @@ export class PaymentService {
     ipAddress?: string;
     userAgent?: string;
   }) {
+    if (!params.storeId) {
+      throw Object.assign(new Error("Store ID is required for payment audit log."), { statusCode: 400 });
+    }
     try {
       await db.insert(paymentAuditLogsTable).values({
         id: randomUUID(),
-        storeId: params.storeId || "store-main",
+        storeId: params.storeId,
         userId: params.userId,
         action: params.action,
         provider: params.provider,
@@ -169,7 +175,10 @@ export class PaymentService {
     }
   }
 
-  async getProvidersStatus(storeId = "store-main") {
+  async getProvidersStatus(storeId: string) {
+    if (!storeId) {
+      throw Object.assign(new Error("Store ID is required."), { statusCode: 400 });
+    }
     await this.ensureStore(storeId);
     const [store] = await db.select().from(storesTable).where(eq(storesTable.id, storeId)).limit(1);
     const connections = await db.select().from(paymentProviderConnectionsTable)
@@ -268,7 +277,10 @@ export class PaymentService {
     ipAddress?: string;
     userAgent?: string;
   }): Promise<{ authorizationUrl: string; state: string }> {
-    const storeId = params.storeId || "store-main";
+    if (!params.storeId) {
+      throw Object.assign(new Error("Store ID is required to initiate payment connection."), { statusCode: 400 });
+    }
+    const storeId = params.storeId;
     await this.ensureStore(storeId);
     const provider = this.getProvider(params.providerName);
 
@@ -451,7 +463,10 @@ export class PaymentService {
     ipAddress?: string;
     userAgent?: string;
   }) {
-    const storeId = params.storeId || "store-main";
+    if (!params.storeId) {
+      throw Object.assign(new Error("Store ID is required to activate payment provider."), { statusCode: 400 });
+    }
+    const storeId = params.storeId;
     await this.ensureStore(storeId);
 
     if (params.connectionId) {
@@ -590,7 +605,10 @@ export class PaymentService {
     ipAddress?: string;
     userAgent?: string;
   }) {
-    const storeId = params.storeId || "store-main";
+    if (!params.storeId) {
+      throw Object.assign(new Error("Store ID is required to disconnect payment provider."), { statusCode: 400 });
+    }
+    const storeId = params.storeId;
     const provider = this.getProvider(params.providerName);
     
     let existing;
@@ -734,7 +752,9 @@ export class PaymentService {
 
       try {
         const [appSetting] = await db.select({ value: appSettingsTable.value })
-          .from(appSettingsTable).where(eq(appSettingsTable.key, `${providerName}_secret_key`)).limit(1);
+          .from(appSettingsTable)
+          .where(and(eq(appSettingsTable.storeId, storeId), eq(appSettingsTable.key, `${providerName}_secret_key`)))
+          .limit(1);
         if (appSetting?.value) {
           legacyKey = decryptCredential(appSetting.value);
         }
@@ -743,7 +763,9 @@ export class PaymentService {
       if (!legacyKey) {
         try {
           const [appPub] = await db.select({ value: appSettingsTable.value })
-            .from(appSettingsTable).where(eq(appSettingsTable.key, `${providerName}_public_key`)).limit(1);
+            .from(appSettingsTable)
+            .where(and(eq(appSettingsTable.storeId, storeId), eq(appSettingsTable.key, `${providerName}_public_key`)))
+            .limit(1);
           if (appPub?.value) {
             legacyPub = decryptCredential(appPub.value);
           }
@@ -753,7 +775,8 @@ export class PaymentService {
       if (!legacyKey) {
         try {
           const [plugin] = await db.select().from(providerPluginsTable)
-            .where(eq(providerPluginsTable.name, providerName)).limit(1);
+            .where(and(eq(providerPluginsTable.storeId, storeId), eq(providerPluginsTable.name, providerName)))
+            .limit(1);
           if (plugin?.apiKey) {
             legacyKey = decryptCredential(plugin.apiKey);
           }
@@ -846,7 +869,10 @@ export class PaymentService {
     };
   }
 
-  async getActiveCheckoutConfig(storeId = "store-main") {
+  async getActiveCheckoutConfig(storeId: string) {
+    if (!storeId) {
+      throw Object.assign(new Error("Store ID is required."), { statusCode: 400 });
+    }
     await this.ensureStore(storeId);
     const [store] = await db.select().from(storesTable).where(eq(storesTable.id, storeId)).limit(1);
     
@@ -903,7 +929,10 @@ export class PaymentService {
   }
 
   async initializeCheckout(params: InitializePaymentParams & { provider?: PaymentProviderType }): Promise<InitializePaymentResult> {
-    const storeId = params.storeId || "store-main";
+    if (!params.storeId) {
+      throw Object.assign(new Error("Store ID is required to initialize checkout."), { statusCode: 400 });
+    }
+    const storeId = params.storeId;
     await this.ensureStore(storeId);
     const [store] = await db.select().from(storesTable).where(eq(storesTable.id, storeId)).limit(1);
     
@@ -931,7 +960,13 @@ export class PaymentService {
       metadata: params.metadata || {},
     });
 
-    const result = await provider.initializePayment(storeId, connection, params);
+    const result = await provider.initializePayment(storeId, connection, {
+      ...params,
+      metadata: {
+        ...(params.metadata || {}),
+        storeName: store?.name || "Boutique",
+      },
+    });
 
     // Update with provider transaction ID
     if (result.providerTransactionId) {

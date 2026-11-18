@@ -40,7 +40,17 @@ export default function AdminAcceptInvitePage() {
   const [stage, setStage]     = useState<Stage>({ type: "loading" });
   const [displayName, setDisplayName] = useState("");
   const [nameError,   setNameError]   = useState<string | null>(null);
+  const [brandName, setBrandName] = useState("Seller Portal");
   const token = getToken();
+
+  useEffect(() => {
+    fetch("/api/store/branding", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.store_name) setBrandName(data.store_name);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!token) { setStage({ type: "invalid", message: "No invite token found in this link." }); return; }
@@ -83,7 +93,7 @@ export default function AdminAcceptInvitePage() {
         <div className="w-8 h-8 bg-[#006c49] rounded flex items-center justify-center">
           <span className="material-symbols-outlined text-white text-base">storefront</span>
         </div>
-        <span className="text-white font-[Manrope] font-bold text-sm tracking-[0.25em] uppercase">Luxe Boutique</span>
+        <span className="text-white font-[Manrope] font-bold text-sm tracking-[0.25em] uppercase">{brandName}</span>
       </div>
 
       <div className="w-full max-w-md">
@@ -178,7 +188,7 @@ export default function AdminAcceptInvitePage() {
                             : <>Invitation for <strong className="text-black">{info.email}</strong></>
                           }
                         </p>
-                        <p className="text-xs font-[Manrope] text-[#7c839b] mt-0.5">to the Luxe Boutique seller portal.</p>
+                        <p className="text-xs font-[Manrope] text-[#7c839b] mt-0.5">to the {brandName} workspace.</p>
                       </div>
                     </div>
                   )}
@@ -267,7 +277,7 @@ export default function AdminAcceptInvitePage() {
       </div>
 
       <p className="mt-8 text-[10px] font-[Manrope] text-[#3a4040] tracking-widest uppercase">
-        © {new Date().getFullYear()} Luxe Boutique · Seller Portal
+        © {new Date().getFullYear()} {brandName} · Seller Portal
       </p>
     </div>
   );

@@ -43,18 +43,18 @@ try {
 
 export async function getSmtpConfig(storeId?: string) {
   try {
-    const query = db.select().from(appSettingsTable);
-    if (storeId) {
-      query.where(eq(appSettingsTable.storeId, storeId));
-    }
-    const rows = await query;
+    const rows = storeId
+      ? await db.select().from(appSettingsTable).where(eq(appSettingsTable.storeId, storeId))
+      : [];
     const settings = Object.fromEntries(rows.map((row) => [row.key, row.value]));
 
-    const host = process.env.SMTP_HOST || settings.smtp_host || "";
-    const port = Number(process.env.SMTP_PORT || settings.smtp_port || 587);
-    const user = process.env.SMTP_USER || settings.smtp_user || "";
-    let pass = process.env.SMTP_PASS || settings.smtp_pass || "";
-    const secure = process.env.SMTP_SECURE === "true" || settings.smtp_secure === "true" || port === 465;
+    const host = settings.smtp_host || process.env.SMTP_HOST || "";
+    const port = Number(settings.smtp_port || process.env.SMTP_PORT || 587);
+    const user = settings.smtp_user || process.env.SMTP_USER || "";
+    let pass = settings.smtp_pass || process.env.SMTP_PASS || "";
+    const secure = settings.smtp_secure !== undefined
+      ? settings.smtp_secure === "true" || port === 465
+      : process.env.SMTP_SECURE === "true" || port === 465;
 
     if (pass && isEncryptedCredential(pass)) {
       try { pass = decryptCredential(pass); } catch {}
@@ -68,10 +68,10 @@ export async function getSmtpConfig(storeId?: string) {
 }
 
 export async function sendEmail(email: Email): Promise<void> {
-  const storeId = email.storeId || "store-main";
-  const fromAddress = await getConfiguredSender(storeId);
-  const smtp = await getSmtpConfig(storeId);
-  const brand = await loadBrandingCache(storeId);
+  const storeId = email.storeId || "";
+  const fromAddress = storeId ? await getConfiguredSender(storeId) : "noreply@prigidcommerce.com";
+  const smtp = await getSmtpConfig(storeId || undefined);
+  const brand = (storeId ? await loadBrandingCache(storeId) : null) || getBranding(storeId || undefined);
 
   if (smtp.isConfigured) {
     try {
@@ -210,46 +210,46 @@ export async function getStoreUrl(storeId: string): Promise<string> {
   return /^https?:\/\//i.test(appUrl) ? appUrl : `https://${appUrl}`;
 }
 
-// ── Unified Luxe Boutique System Template Engine ─────────────────────────────
+// ── Unified Multi-Tenant System Template Engine ──────────────────────────────
 
 let cachedBranding: Record<string, any> = {};
+
+const NEUTRAL_BRANDING = {
+  store_name: "Boutique",
+  brand_primary_color: "#006c49",
+  brand_logo_url: "",
+  brand_typography: "Georgia, serif",
+  brand_tagline: "Private Client & Curated Commerce",
+  brand_valet_instructions: "Complimentary arrival service is available at our main entrance.",
+  brand_hospitality_notes: "Personalized private client consultation available upon arrival.",
+};
 
 export async function loadBrandingCache(storeId?: string): Promise<any> {
   if (!storeId) return null;
   try {
-    const rows = await db.select().from(appSettingsTable).where(eq(appSettingsTable.storeId, storeId));
+    const [[store], rows] = await Promise.all([
+      db.select().from(storesTable).where(eq(storesTable.id, storeId)).limit(1),
+      db.select().from(appSettingsTable).where(eq(appSettingsTable.storeId, storeId)),
+    ]);
     const s = Object.fromEntries(rows.map((row) => [row.key, row.value]));
     cachedBranding[storeId] = {
-      store_name: s.store_name || "LUXE Boutique",
+      store_name: s.store_name || store?.name || "Boutique",
       brand_primary_color: s.brand_primary_color || "#006c49",
       brand_logo_url: s.brand_logo_url || "",
       brand_typography: s.brand_typography || "Georgia, serif",
-      brand_valet_instructions: s.brand_valet_instructions || "Complimentary valet parking is available at the main entrance.",
-      brand_hospitality_notes: s.brand_hospitality_notes || "Enjoy our signature champagne service upon your arrival.",
+      brand_tagline: s.brand_tagline || NEUTRAL_BRANDING.brand_tagline,
+      brand_valet_instructions: s.brand_valet_instructions || NEUTRAL_BRANDING.brand_valet_instructions,
+      brand_hospitality_notes: s.brand_hospitality_notes || NEUTRAL_BRANDING.brand_hospitality_notes,
     };
   } catch (error) {
-    cachedBranding[storeId] = {
-      store_name: "LUXE Boutique",
-      brand_primary_color: "#006c49",
-      brand_logo_url: "",
-      brand_typography: "Georgia, serif",
-      brand_valet_instructions: "Complimentary valet parking is available at the main entrance.",
-      brand_hospitality_notes: "Enjoy our signature champagne service upon your arrival.",
-    };
+    cachedBranding[storeId] = { ...NEUTRAL_BRANDING };
   }
   return cachedBranding[storeId];
 }
 
-export function getBranding(storeId: string = "store-main"): any {
-  if (!cachedBranding[storeId]) {
-    return {
-      store_name: "LUXE Boutique",
-      brand_primary_color: "#006c49",
-      brand_logo_url: "",
-      brand_typography: "Georgia, serif",
-      brand_valet_instructions: "Complimentary valet parking is available at the main entrance.",
-      brand_hospitality_notes: "Enjoy our signature champagne service upon your arrival.",
-    };
+export function getBranding(storeId?: string): any {
+  if (!storeId || !cachedBranding[storeId]) {
+    return { ...NEUTRAL_BRANDING };
   }
   return cachedBranding[storeId];
 }
@@ -262,9 +262,10 @@ export function renderSystemEmail(options: {
   actionButton?: { text: string; url: string };
   footerNotice?: string;
   storeId?: string;
+  storeName?: string;
 }): string {
-  const brand = getBranding(options.storeId || "store-main");
-  const storeName = brand.store_name;
+  const brand = getBranding(options.storeId);
+  const storeName = options.storeName || brand.store_name;
   const primaryColor = brand.brand_primary_color;
   const logoUrl = brand.brand_logo_url;
   const typography = brand.brand_typography;
@@ -306,7 +307,7 @@ export function renderSystemEmail(options: {
                   </span>`
               }
               <span style="font-size:9px; font-weight:600; letter-spacing:3px; color:#C5A880; text-transform:uppercase; display:block; margin-top:4px;">
-                HAUTE COUTURE & PRIVATE CLIENT SERVICES
+                ${String(brand.brand_tagline || "PRIVATE CLIENT SERVICES").toUpperCase()}
               </span>
             </td>
           </tr>
@@ -331,8 +332,8 @@ export function renderSystemEmail(options: {
           <tr>
             <td align="center" style="background-color:#F8FAFC; padding:20px 24px; border-top:1px solid #E2E8F0; font-size:11px; color:#94A3B8; line-height:1.5;">
               <p style="margin:0 0 6px 0; font-weight:600; color:#64748B;">${storeName.toUpperCase()} CONCIERGE SERVICES</p>
-              <p style="margin:0;">${options.footerNotice || "This is an official system notification regarding your Luxe Boutique account."}</p>
-              <p style="margin:8px 0 0 0; font-size:10px; color:#CBD5E1;">© 2026 ${storeName}. All rights reserved.</p>
+              <p style="margin:0;">${options.footerNotice || `This is an official system notification regarding your ${storeName} account.`}</p>
+              <p style="margin:8px 0 0 0; font-size:10px; color:#CBD5E1;">© ${new Date().getFullYear()} ${storeName}. All rights reserved.</p>
             </td>
           </tr>
 
@@ -346,17 +347,20 @@ export function renderSystemEmail(options: {
 
 // ── Notification Builders ────────────────────────────────────────────────────
 
-export function buildOtpEmail(options: { code: string; expiresMinutes?: number }): { subject: string; text: string; html: string } {
+export function buildOtpEmail(options: { code: string; expiresMinutes?: number; storeId?: string; storeName?: string }): { subject: string; text: string; html: string } {
+  const storeName = options.storeName || getBranding(options.storeId).store_name;
   const code = options.code;
   const mins = options.expiresMinutes ?? 10;
-  const subject = "Your Luxe Boutique seller sign-in code";
-  const text = `Your Luxe Boutique seller sign-in code is ${code}. It expires in ${mins} minutes.`;
+  const subject = `Your ${storeName} seller sign-in code`;
+  const text = `Your ${storeName} seller sign-in code is ${code}. It expires in ${mins} minutes.`;
   const html = renderSystemEmail({
     title: "Executive Sign-In Verification",
     badge: "2FA SECURITY CODE",
     preheader: `Your sign-in verification code is ${code}`,
+    storeId: options.storeId,
+    storeName,
     contentHtml: `
-      <p style="margin-top:0;">Please enter the single-use verification code below to authorize your access to the Luxe Boutique Executive Dashboard:</p>
+      <p style="margin-top:0;">Please enter the single-use verification code below to authorize your access to the ${storeName} Executive Dashboard:</p>
       <div style="text-align:center; margin:24px 0; background-color:#F8FAFC; border:2px dashed #CBD5E1; border-radius:12px; padding:20px;">
         <span style="font-family:Monaco, Consolas, 'Courier New', monospace; font-size:32px; font-weight:800; letter-spacing:10px; color:#0F172A; display:inline-block;">${code}</span>
       </div>
@@ -366,18 +370,21 @@ export function buildOtpEmail(options: { code: string; expiresMinutes?: number }
   return { subject, text, html };
 }
 
-export function buildPasswordResetEmail(options: { name?: string; resetUrl: string; expiresMinutes?: number }): { subject: string; text: string; html: string } {
+export function buildPasswordResetEmail(options: { name?: string; resetUrl: string; expiresMinutes?: number; storeId?: string; storeName?: string }): { subject: string; text: string; html: string } {
+  const storeName = options.storeName || getBranding(options.storeId).store_name;
   const greeting = options.name ? `Dear ${options.name},` : "Hello,";
   const mins = options.expiresMinutes ?? 60;
-  const subject = "Reset your Luxe Boutique password";
-  const text = `Reset your Luxe Boutique password using this link: ${options.resetUrl}. This link expires in ${mins} minutes.`;
+  const subject = `Reset your ${storeName} password`;
+  const text = `Reset your ${storeName} password using this link: ${options.resetUrl}. This link expires in ${mins} minutes.`;
   const html = renderSystemEmail({
     title: "Password Reset Request",
     badge: "ACCOUNT SECURITY",
-    preheader: "Instructions to reset your Luxe Boutique password",
+    preheader: `Instructions to reset your ${storeName} password`,
+    storeId: options.storeId,
+    storeName,
     contentHtml: `
       <p style="margin-top:0;">${greeting}</p>
-      <p>We received a request to reset the password associated with your Luxe Boutique account.</p>
+      <p>We received a request to reset the password associated with your ${storeName} account.</p>
       <p>Click the button below to specify your new password. For security, this link will expire in <strong>${mins} minutes</strong>.</p>
     `,
     actionButton: { text: "Reset Password", url: options.resetUrl },
@@ -386,17 +393,20 @@ export function buildPasswordResetEmail(options: { name?: string; resetUrl: stri
   return { subject, text, html };
 }
 
-export function buildWelcomeEmail(options: { name?: string; email: string; storeUrl: string }): { subject: string; text: string; html: string } {
+export function buildWelcomeEmail(options: { name?: string; email: string; storeUrl: string; storeId?: string; storeName?: string }): { subject: string; text: string; html: string } {
+  const storeName = options.storeName || getBranding(options.storeId).store_name;
   const greeting = options.name ? `Dear ${options.name}` : "Valued Member";
-  const subject = "Welcome to Luxe Boutique";
-  const text = `Welcome to Luxe Boutique, ${options.name || options.email}! Your private account is active. Explore our collections at ${options.storeUrl}.`;
+  const subject = `Welcome to ${storeName}`;
+  const text = `Welcome to ${storeName}, ${options.name || options.email}! Your private account is active. Explore our collections at ${options.storeUrl}.`;
   const html = renderSystemEmail({
     title: "Welcome to the Private Client Club",
     badge: "MEMBERSHIP CONFIRMED",
-    preheader: "Your Luxe Boutique account has been activated",
+    preheader: `Your ${storeName} account has been activated`,
+    storeId: options.storeId,
+    storeName,
     contentHtml: `
       <p style="margin-top:0;">${greeting},</p>
-      <p>Thank you for joining Luxe Boutique. Your private client account has been created successfully.</p>
+      <p>Thank you for joining ${storeName}. Your private client account has been created successfully.</p>
       <p>As a member, you will enjoy seamless checkout, order tracking, wishlist synchronization, and exclusive early access to seasonal lookbooks.</p>
     `,
     actionButton: { text: "Explore Collections", url: options.storeUrl },
@@ -410,8 +420,11 @@ export function buildOrderConfirmationEmail(options: {
   items: Array<{ name: string; qty: number; price: number }>;
   total: number;
   storeUrl: string;
+  storeId?: string;
+  storeName?: string;
 }): { subject: string; text: string; html: string } {
-  const subject = `Luxe Boutique Order Confirmation #${options.orderId.slice(0, 8).toUpperCase()}`;
+  const storeName = options.storeName || getBranding(options.storeId).store_name;
+  const subject = `${storeName} Order Confirmation #${options.orderId.slice(0, 8).toUpperCase()}`;
   const text = `Dear ${options.customerName}, thank you for your order #${options.orderId} totaling $${options.total.toLocaleString()}. We are processing your items.`;
   
   const itemsHtml = options.items.map(item => `
@@ -426,9 +439,11 @@ export function buildOrderConfirmationEmail(options: {
     title: `Order Confirmation #${options.orderId.slice(0, 8).toUpperCase()}`,
     badge: "ORDER CONFIRMED",
     preheader: `Thank you for your order of $${options.total.toLocaleString()}`,
+    storeId: options.storeId,
+    storeName,
     contentHtml: `
       <p style="margin-top:0;">Dear ${options.customerName},</p>
-      <p>Thank you for your order. We have received your payment and our ateliers are currently preparing your items with meticulous care.</p>
+      <p>Thank you for your order with ${storeName}. We have received your payment and are currently preparing your items.</p>
       
       <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin:20px 0; border-collapse:collapse;">
         <thead>
@@ -460,14 +475,19 @@ export function buildOrderStatusUpdateEmail(options: {
   customerName: string;
   status: string;
   storeUrl: string;
+  storeId?: string;
+  storeName?: string;
 }): { subject: string; text: string; html: string } {
-  const subject = `Update on Luxe Boutique Order #${options.orderId.slice(0, 8).toUpperCase()}`;
+  const storeName = options.storeName || getBranding(options.storeId).store_name;
+  const subject = `Update on ${storeName} Order #${options.orderId.slice(0, 8).toUpperCase()}`;
   const text = `Dear ${options.customerName}, your order #${options.orderId} status has been updated to: ${options.status}.`;
   
   const html = renderSystemEmail({
     title: `Order Status: ${options.status}`,
     badge: "ORDER UPDATE",
     preheader: `Your order #${options.orderId} status is now ${options.status}`,
+    storeId: options.storeId,
+    storeName,
     contentHtml: `
       <p style="margin-top:0;">Dear ${options.customerName},</p>
       <p>We are writing to update you on the progress of your order <strong>#${options.orderId.slice(0, 8).toUpperCase()}</strong>.</p>
@@ -489,10 +509,13 @@ export function buildLowStockAlertEmail(options: {
   products: Array<{ name: string; stock: number }>;
   threshold: number;
   adminUrl: string;
+  storeId?: string;
+  storeName?: string;
 }): { subject: string; text: string; html: string } {
+  const storeName = options.storeName || getBranding(options.storeId).store_name;
   const count = options.products.length;
-  const subject = `[INVENTORY ALERT] ${count} item(s) below low stock threshold (${options.threshold})`;
-  const text = `Attention: ${count} product(s) have fallen to or below ${options.threshold} units in stock.`;
+  const subject = `[${storeName}] INVENTORY ALERT: ${count} item(s) below threshold (${options.threshold})`;
+  const text = `Attention: ${count} product(s) in ${storeName} have fallen to or below ${options.threshold} units in stock.`;
 
   const rowsHtml = options.products.map(p => `
     <tr>
@@ -505,9 +528,11 @@ export function buildLowStockAlertEmail(options: {
     title: "Low Inventory Warning",
     badge: "ADMIN INVENTORY ALERT",
     preheader: `Alert: ${count} product(s) below ${options.threshold} units`,
+    storeId: options.storeId,
+    storeName,
     contentHtml: `
       <p style="margin-top:0;">Attention Inventory Manager,</p>
-      <p>The following active product(s) have reached or fallen below your configured threshold of <strong>${options.threshold} units</strong>:</p>
+      <p>The following active product(s) in <strong>${storeName}</strong> have reached or fallen below your configured threshold of <strong>${options.threshold} units</strong>:</p>
 
       <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin:20px 0; border-collapse:collapse;">
         <thead>
@@ -527,17 +552,20 @@ export function buildLowStockAlertEmail(options: {
   return { subject, text, html };
 }
 
-export function buildNewsletterWelcomeEmail(options: { email: string; storeUrl: string }): { subject: string; text: string; html: string } {
-  const subject = "Welcome to Luxe Boutique Insiders";
-  const text = `Thank you for subscribing to Luxe Boutique updates! Visit ${options.storeUrl} to explore new arrivals.`;
+export function buildNewsletterWelcomeEmail(options: { email: string; storeUrl: string; storeId?: string; storeName?: string }): { subject: string; text: string; html: string } {
+  const storeName = options.storeName || getBranding(options.storeId).store_name;
+  const subject = `Welcome to ${storeName} Insiders`;
+  const text = `Thank you for subscribing to ${storeName} updates! Visit ${options.storeUrl} to explore new arrivals.`;
 
   const html = renderSystemEmail({
-    title: "Welcome to Luxe Boutique Insiders",
+    title: `Welcome to ${storeName} Insiders`,
     badge: "NEWSLETTER SUBSCRIPTION",
-    preheader: "Thank you for subscribing to Luxe Boutique updates",
+    preheader: `Thank you for subscribing to ${storeName} updates`,
+    storeId: options.storeId,
+    storeName,
     contentHtml: `
       <p style="margin-top:0;">Thank you for subscribing,</p>
-      <p>You are now on the insider list for Luxe Boutique. You will be the first to receive notifications regarding private collection launches, runway previews, and seasonal sales.</p>
+      <p>You are now on the insider list for ${storeName}. You will be the first to receive notifications regarding private collection launches, runway previews, and seasonal sales.</p>
     `,
     actionButton: { text: "Explore New Arrivals", url: options.storeUrl },
   });

@@ -1,12 +1,13 @@
 import { Router, type Response } from "express";
 import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from "crypto";
-import { db, usersTable, sessionsTable, adminOtpCodesTable, authRateLimitsTable, appSettingsTable, storesTable } from "@workspace/db";
+import { db, usersTable, sessionsTable, adminOtpCodesTable, authRateLimitsTable, appSettingsTable, storesTable, teamMembersTable } from "@workspace/db";
 import { eq, or, and, gt, lt, gte, count, sql, inArray } from "drizzle-orm";
+import { buildTenantUrl } from "@workspace/tenant-routing";
 import { SESSION_COOKIE, getSessionUser, requireAdmin } from "../middleware/requireAdmin";
 import { validate } from "../middleware/validate";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
-import { sendEmail, buildOtpEmail, buildPasswordResetEmail, buildWelcomeEmail, getStoreUrl } from "../services/mailer";
+import { sendEmail, buildOtpEmail, buildPasswordResetEmail, buildWelcomeEmail, getStoreUrl, loadBrandingCache, getBranding } from "../services/mailer";
 import {
   sendWhatsAppNotification,
   buildWhatsAppOtpMessage,
@@ -130,11 +131,13 @@ router.post("/auth/seller/register", validate(sellerRegisterSchema), async (req:
     const storeId = `store-${randomBytes(6).toString("hex")}`;
     const pubKey = `pk_live_${randomBytes(24).toString("hex")}`;
     const secretKey = `sk_live_${randomBytes(24).toString("hex")}`;
+    const userId = randomUUID();
 
     await db.insert(storesTable).values({
       id: storeId,
       name: storeName,
       slug: slug,
+      ownerId: userId,
       planTier: "starter",
       status: "active",
       isPublished: false,
@@ -144,7 +147,6 @@ router.post("/auth/seller/register", validate(sellerRegisterSchema), async (req:
       currency: "USD",
     });
 
-    const userId = randomUUID();
     const passwordHash = await bcrypt.hash(password, 10);
     const user = {
       id: userId,
@@ -156,7 +158,17 @@ router.post("/auth/seller/register", validate(sellerRegisterSchema), async (req:
     };
     await db.insert(usersTable).values(user);
 
+    await db.insert(teamMembersTable).values({
+      id: randomUUID(),
+      storeId,
+      name,
+      email,
+      role: "Owner",
+      status: "Active",
+    });
+
     const token = await setSession(res, userId, storeId);
+    res.cookie("prigid_store_slug", slug, { sameSite: "lax", maxAge: 86400 * 1000 });
 
     await db.insert(appSettingsTable).values([
       { id: randomUUID(), storeId, key: "store_name", value: storeName, updatedAt: new Date() },
@@ -166,8 +178,11 @@ router.post("/auth/seller/register", validate(sellerRegisterSchema), async (req:
       { id: randomUUID(), storeId, key: "brand_bg_color", value: "#0f172a", updatedAt: new Date() },
     ]);
 
+    const hostHeader = (req.headers["x-forwarded-host"] || req.get("host") || req.hostname) as string;
+    const canonicalUrl = buildTenantUrl({ slug, path: "/seller" }, hostHeader);
+
     const { passwordHash: _, ...safe } = user;
-    return res.status(201).json({ ...safe, storeId, slug, token });
+    return res.status(201).json({ ...safe, storeId, slug, canonicalUrl, token });
   } catch (err: any) {
     console.error("[Seller Register Error]", err);
     return res.status(500).json({ error: err.message || "Failed to register seller account." });
@@ -184,16 +199,28 @@ router.post("/auth/seller/login", validate(sellerLoginSchema), async (req: any, 
   try {
     const [user] = await db.select().from(usersTable).where(and(
       eq(usersTable.email, email),
-      or(eq(usersTable.role, "ADMIN"), eq(usersTable.role, "SUPER_ADMIN"))
+      inArray(usersTable.role, ["ADMIN", "SUPER_ADMIN", "PLATFORM_ADMIN"])
     )).limit(1);
 
     if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
       return res.status(401).json({ error: "Invalid email or password." });
     }
 
-    const token = await setSession(res, user.id, user.storeId);
+    const token = await setSession(res, user.id, user.storeId || "store-001");
+    const [store] = user.storeId
+      ? await db.select().from(storesTable).where(eq(storesTable.id, user.storeId)).limit(1)
+      : [];
+
+    if (store?.slug) {
+      res.cookie("prigid_store_slug", store.slug, { sameSite: "lax", maxAge: 86400 * 1000 });
+    }
+    const hostHeader = (req.headers["x-forwarded-host"] || req.get("host") || req.hostname) as string;
+    const canonicalUrl = store
+      ? buildTenantUrl({ slug: store.slug, customDomain: store.customDomain, path: "/seller" }, hostHeader)
+      : undefined;
+
     const { passwordHash: _, ...safe } = user;
-    return res.json({ ...safe, token, storeId: user.storeId });
+    return res.json({ ...safe, token, storeId: user.storeId, slug: store?.slug, canonicalUrl });
   } catch (err: any) {
     console.error("[Seller Login Error]", err);
     return res.status(500).json({ error: err.message || "Failed to log in." });
@@ -209,14 +236,15 @@ router.post("/auth/register", validate(registerSchema), async (req: TenantReques
   }
   const existing = await db.select().from(usersTable).where(and(eq(usersTable.email, email), eq(usersTable.storeId, storeId))).limit(1);
   if (existing.length) return res.status(409).json({ error: "Email already registered in this store." });
-  const user = { id: randomUUID(), storeId, name, email, role: "customer" as const, passwordHash: await bcrypt.hash(password, 10) };
+  const user = { id: randomUUID(), storeId, name, email, role: "CUSTOMER" as const, passwordHash: await bcrypt.hash(password, 10) };
   await db.insert(usersTable).values(user);
   const token = await setSession(res, user.id, storeId);
   
   // Dispatch welcome email & WhatsApp notification asynchronously
-  getStoreUrl(storeId).then((storeUrl) => {
-    sendEmail({ to: user.email, ...buildWelcomeEmail({ name: user.name, email: user.email, storeUrl }), storeId }).catch(() => {});
-    const waText = buildWhatsAppWelcomeMessage({ recipientName: user.name, storeUrl });
+  Promise.all([getStoreUrl(storeId), loadBrandingCache(storeId)]).then(([storeUrl]) => {
+    const storeName = getBranding(storeId).store_name;
+    sendEmail({ to: user.email, ...buildWelcomeEmail({ name: user.name, email: user.email, storeUrl, storeId, storeName }), storeId }).catch(() => {});
+    const waText = buildWhatsAppWelcomeMessage({ recipientName: user.name, storeUrl, storeName });
     sendWhatsAppNotification(user.email, waText, storeId).catch(() => {});
   }).catch(() => {});
 
@@ -264,15 +292,16 @@ router.post("/auth/firebase", validate(firebaseAuthSchema), async (req: TenantRe
       storeId,
       name: name || email.split("@")[0] || "Valued Customer",
       email,
-      role: "customer" as const,
+      role: "CUSTOMER" as const,
       passwordHash: await bcrypt.hash(randomUUID(), 10),
     };
     await db.insert(usersTable).values(newUser);
     user = newUser;
 
     // Dispatch welcome email asynchronously for new user
-    getStoreUrl(storeId).then((storeUrl) => {
-      sendEmail({ to: newUser.email, ...buildWelcomeEmail({ name: newUser.name, email: newUser.email, storeUrl }), storeId }).catch(() => {});
+    Promise.all([getStoreUrl(storeId), loadBrandingCache(storeId)]).then(([storeUrl]) => {
+      const storeName = getBranding(storeId).store_name;
+      sendEmail({ to: newUser.email, ...buildWelcomeEmail({ name: newUser.name, email: newUser.email, storeUrl, storeId, storeName }), storeId }).catch(() => {});
     }).catch(() => {});
   }
   
@@ -296,7 +325,7 @@ router.get("/auth/admin/exists", async (req: TenantRequest, res: Response) => {
     .from(usersTable)
     .where(and(
       eq(usersTable.storeId, storeId),
-      or(eq(usersTable.role, "admin"), eq(usersTable.role, "superadmin"))
+      inArray(usersTable.role, ["ADMIN", "SUPER_ADMIN", "PLATFORM_ADMIN"])
     ));
   const isProd = process.env.NODE_ENV === "production";
   return res.json({
@@ -327,12 +356,12 @@ router.post("/auth/admin/quick-login", async (req: TenantRequest, res: Response)
       .from(usersTable)
       .where(and(
         eq(usersTable.storeId, storeId),
-        or(eq(usersTable.role, "superadmin"), eq(usersTable.role, "admin"))
+        inArray(usersTable.role, ["SUPER_ADMIN", "ADMIN", "PLATFORM_ADMIN"])
       ))
       .limit(1);
   }
 
-  if (!admin || !["admin", "superadmin"].includes(admin.role)) {
+  if (!admin || !["ADMIN", "SUPER_ADMIN", "PLATFORM_ADMIN"].includes(admin.role.toUpperCase())) {
     return res.status(403).json({ error: "No admin privileges found for this account in this store." });
   }
 
@@ -359,12 +388,15 @@ router.post("/auth/admin/bootstrap", validate(bootstrapSchema), async (req: Tena
     const existing = await tx.select({ id: usersTable.id }).from(usersTable)
       .where(and(
         eq(usersTable.storeId, storeId),
-        or(eq(usersTable.role, "admin"), eq(usersTable.role, "superadmin"))
+        inArray(usersTable.role, ["ADMIN", "SUPER_ADMIN", "PLATFORM_ADMIN"])
       )).limit(1);
     if (existing.length) return null;
     const [created] = await tx.insert(usersTable).values({
-      id: randomUUID(), storeId, name, email, role: "superadmin" as const, passwordHash: "",
+      id: randomUUID(), storeId, name, email, role: "SUPER_ADMIN" as const, passwordHash: "",
     }).returning();
+    await tx.insert(teamMembersTable).values({
+      id: randomUUID(), storeId, name, email, role: "Owner", status: "Active",
+    }).onConflictDoNothing();
     return created;
   });
   if (!user) return res.status(410).json({ error: "Admin bootstrap is disabled after initial setup." });
@@ -381,7 +413,7 @@ router.post("/auth/admin/request-otp", validate(otpRequestSchema), async (req: T
     return res.status(429).json({ error: "Too many OTP requests. Try again later." });
   }
   const [admin] = await db.select().from(usersTable).where(and(eq(usersTable.email, email), eq(usersTable.storeId, storeId))).limit(1);
-  if (!admin || !["admin", "superadmin"].includes(admin.role)) return res.status(404).json({ error: "No admin account found for this email in this store." });
+  if (!admin || !["ADMIN", "SUPER_ADMIN", "PLATFORM_ADMIN"].includes(admin.role.toUpperCase())) return res.status(404).json({ error: "No admin account found for this email in this store." });
   const code = String(randomInt(100000, 1000000));
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
   await db.update(adminOtpCodesTable).set({ used: true })
@@ -389,14 +421,16 @@ router.post("/auth/admin/request-otp", validate(otpRequestSchema), async (req: T
   await db.delete(adminOtpCodesTable).where(and(eq(adminOtpCodesTable.storeId, storeId), lt(adminOtpCodesTable.expiresAt, new Date())));
   await db.insert(adminOtpCodesTable).values({ id: randomUUID(), storeId, email, code: otpDigest(email, code), expiresAt, used: false, attempts: 0 });
   try {
-    const emailData = buildOtpEmail({ code });
+    await loadBrandingCache(storeId);
+    const storeName = getBranding(storeId).store_name;
+    const emailData = buildOtpEmail({ code, storeId, storeName });
     await sendEmail({
       to: email,
       storeId,
       ...emailData,
     });
     // Dispatch WhatsApp OTP alert asynchronously
-    const waText = buildWhatsAppOtpMessage({ code });
+    const waText = buildWhatsAppOtpMessage({ code, storeName });
     sendWhatsAppNotification(email, waText, storeId).catch(() => {});
     return res.json({ ok: true });
   } catch (error) {
@@ -429,7 +463,7 @@ router.post("/auth/admin/verify-otp", validate(otpVerifySchema), async (req: Ten
   }
   await db.update(adminOtpCodesTable).set({ used: true }).where(eq(adminOtpCodesTable.id, stored.id));
   const [admin] = await db.select().from(usersTable).where(and(eq(usersTable.email, email), eq(usersTable.storeId, storeId))).limit(1);
-  if (!admin || !["admin", "superadmin"].includes(admin.role)) return res.status(404).json({ error: "Admin not found." });
+  if (!admin || !["ADMIN", "SUPER_ADMIN", "PLATFORM_ADMIN"].includes(admin.role.toUpperCase())) return res.status(404).json({ error: "Admin not found." });
   const token = await setSession(res, admin.id, storeId);
   const { passwordHash: _, ...safe } = admin;
   return res.json({ ...safe, token });
@@ -446,20 +480,20 @@ router.post("/auth/forgot-password", validate(forgotSchema), async (req: TenantR
   const token = randomBytes(32).toString("base64url");
   const expiry = new Date(Date.now() + 60 * 60 * 1000);
   await db.update(usersTable).set({ passwordResetToken: digest(token), passwordResetExpiry: expiry }).where(and(eq(usersTable.id, user.id), eq(usersTable.storeId, storeId)));
-  const [storeUrlSetting] = await db.select({ value: appSettingsTable.value })
-    .from(appSettingsTable).where(and(eq(appSettingsTable.key, "store_url"), eq(appSettingsTable.storeId, storeId))).limit(1);
-  const appUrl = (process.env.PUBLIC_APP_URL || process.env.APP_URL || storeUrlSetting?.value || "")
-    .split(",")[0].trim().replace(/\/$/, "");
-  if (!appUrl) {
+  const baseUrl = await getStoreUrl(storeId).catch(() => "");
+  if (!baseUrl) {
     await db.update(usersTable).set({ passwordResetToken: null, passwordResetExpiry: null }).where(and(eq(usersTable.id, user.id), eq(usersTable.storeId, storeId)));
     return res.status(503).json({ error: "Password reset email is not configured." });
   }
-  const baseUrl = /^https?:\/\//i.test(appUrl) ? appUrl : `https://${appUrl}`;
   try {
-    const resetUrl = `${baseUrl}/reset-password?token=${encodeURIComponent(token)}`;
+    await loadBrandingCache(storeId);
+    const storeName = getBranding(storeId).store_name;
+    const resetUrl = `${baseUrl.replace(/\/$/, "")}/reset-password?token=${encodeURIComponent(token)}`;
     const emailData = buildPasswordResetEmail({
       name: user.name,
       resetUrl,
+      storeId,
+      storeName,
     });
     await sendEmail({
       to: email,
@@ -467,7 +501,7 @@ router.post("/auth/forgot-password", validate(forgotSchema), async (req: TenantR
       ...emailData,
     });
     // Dispatch WhatsApp Password Reset notification
-    const waText = buildWhatsAppPasswordResetMessage({ recipientName: user.name, resetUrl });
+    const waText = buildWhatsAppPasswordResetMessage({ recipientName: user.name, resetUrl, storeName });
     sendWhatsAppNotification(user.email, waText, storeId).catch(() => {});
   } catch (error) {
     await db.update(usersTable).set({ passwordResetToken: null, passwordResetExpiry: null }).where(and(eq(usersTable.id, user.id), eq(usersTable.storeId, storeId)));
@@ -493,16 +527,12 @@ router.get("/auth/google", async (req: TenantRequest, res: Response) => {
   const storeId = req.storeId!;
   const returnUrl = (req.query.returnUrl as string) || "";
   
-  // 1. Fetch Google Client Credentials (Env or Database)
-  let clientId = process.env.GOOGLE_CLIENT_ID;
-  if (!clientId) {
-    // Check database settings
-    const [dbClientId] = await db.select()
-      .from(appSettingsTable)
-      .where(and(eq(appSettingsTable.storeId, storeId), eq(appSettingsTable.key, "google_client_id")))
-      .limit(1);
-    clientId = dbClientId?.value;
-  }
+  // 1. Fetch Google Client Credentials (Database per-tenant first, Env fallback)
+  const [dbClientId] = await db.select()
+    .from(appSettingsTable)
+    .where(and(eq(appSettingsTable.storeId, storeId), eq(appSettingsTable.key, "google_client_id")))
+    .limit(1);
+  const clientId = dbClientId?.value || process.env.GOOGLE_CLIENT_ID;
 
   if (!clientId) {
     return res.redirect("/?auth_error=google_not_configured");
@@ -539,24 +569,20 @@ router.get("/auth/google/callback", async (req: TenantRequest, res: Response) =>
       return res.redirect("/?auth_error=invalid_store_context");
     }
 
-    // 2. Get Google Client Credentials
-    let clientId = process.env.GOOGLE_CLIENT_ID;
-    let clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    // 2. Get Google Client Credentials (DB per-tenant first, env fallback)
+    const rows = await db.select()
+      .from(appSettingsTable)
+      .where(and(eq(appSettingsTable.storeId, storeId), inArray(appSettingsTable.key, ["google_client_id", "google_client_secret"])));
+    const config = Object.fromEntries(rows.map(r => [r.key, r.value]));
 
-    if (!clientId || !clientSecret) {
-      const rows = await db.select()
-        .from(appSettingsTable)
-        .where(and(eq(appSettingsTable.storeId, storeId), inArray(appSettingsTable.key, ["google_client_id", "google_client_secret"])));
-      
-      const config = Object.fromEntries(rows.map(r => [r.key, r.value]));
-      if (!clientId) clientId = config.google_client_id;
-      if (!clientSecret) {
-        const encryptedSecret = config.google_client_secret;
-        if (encryptedSecret) {
-          const { decryptCredential } = await import("../services/credentialVault");
-          clientSecret = decryptCredential(encryptedSecret);
-        }
-      }
+    const clientId = config.google_client_id || process.env.GOOGLE_CLIENT_ID;
+    let clientSecret: string | undefined;
+    if (config.google_client_secret) {
+      const { decryptCredential } = await import("../services/credentialVault");
+      clientSecret = decryptCredential(config.google_client_secret);
+    }
+    if (!clientSecret) {
+      clientSecret = process.env.GOOGLE_CLIENT_SECRET;
     }
 
     if (!clientId || !clientSecret) {
@@ -611,17 +637,17 @@ router.get("/auth/google/callback", async (req: TenantRequest, res: Response) =>
         storeId,
         email,
         name: profile.name || email.split("@")[0],
+        role: "CUSTOMER",
         passwordHash,
-        createdAt: new Date(),
-        updatedAt: new Date(),
       }).returning();
       user = newUser;
 
       // Send Welcome Email asynchronously
-      getStoreUrl(storeId).then((storeUrl) => {
+      Promise.all([getStoreUrl(storeId), loadBrandingCache(storeId)]).then(([storeUrl]) => {
+        const storeName = getBranding(storeId).store_name;
         sendEmail({
           to: user.email,
-          ...buildWelcomeEmail({ name: user.name, email: user.email, storeUrl }),
+          ...buildWelcomeEmail({ name: user.name, email: user.email, storeUrl, storeId, storeName }),
           storeId
         }).catch(() => {});
       }).catch(err => console.error("Failed to send welcome email for oauth user:", err));

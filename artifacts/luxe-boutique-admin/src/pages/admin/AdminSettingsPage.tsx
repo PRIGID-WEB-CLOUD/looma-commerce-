@@ -303,7 +303,7 @@ function ApiKeysPanel() {
           <div>
             <h2 className="text-[24px] font-serif font-semibold text-black">API Keys</h2>
             <p className="text-xs font-[Manrope] text-[#7c839b] mt-0.5">
-              Issue keys for programmatic access to the Luxe Boutique API. Revoke any key instantly.
+              Issue keys for programmatic access to your store API. Revoke any key instantly.
             </p>
           </div>
           <button
@@ -431,7 +431,7 @@ function ApiKeysPanel() {
         <div>
           <p className="text-xs font-[Manrope] font-bold text-amber-800 mb-1">Security notice</p>
           <p className="text-[11px] font-[Manrope] text-amber-700 leading-relaxed">
-            API keys grant full read/write access to the Luxe Boutique API. Never commit keys to source code or share them publicly.
+            API keys grant full read/write access to your store API. Never commit keys to source code or share them publicly.
             Revoke immediately if a key is suspected to be compromised — revocation takes effect instantly.
           </p>
         </div>
@@ -591,7 +591,7 @@ function ApiKeysPanel() {
 export default function AdminSettingsPage() {
   const [activeSection, setActiveSection] = useState<Section>("email");
 
-  const [senderName,    setSenderName]    = useState("Luxe Boutique Concierge");
+  const [senderName,    setSenderName]    = useState("Store Concierge");
   const [senderEmail,   setSenderEmail]   = useState("");
 
   const [cloudName,    setCloudName]    = useState("");
@@ -599,7 +599,7 @@ export default function AdminSettingsPage() {
   const [cloudSecret,  setCloudSecret]  = useState("");
   const [cloudPreset,  setCloudPreset]  = useState("");
 
-  const [storeName,     setStoreName]     = useState("Luxe Boutique");
+  const [storeName,     setStoreName]     = useState("");
   const [storeEmail,    setStoreEmail]    = useState("");
   const [storeCurrency, setStoreCurrency] = useState("USD");
   const [storeTimezone, setStoreTimezone] = useState("UTC");
@@ -712,13 +712,13 @@ export default function AdminSettingsPage() {
   useEffect(() => {
     if (!data) return;
     const s = data.settings;
-    setSenderName(s.sender_name ?? "Luxe Boutique Concierge");
+    setSenderName(s.sender_name ?? "Store Concierge");
     setSenderEmail(s.store_email ?? s.sender_email ?? "");
     setCloudName(s.cloudinary_cloud_name    ?? "");
     setCloudApiKey(s.cloudinary_api_key     ?? "");
     setCloudSecret(s.cloudinary_api_secret ? MASK : "");
     setCloudPreset(s.cloudinary_upload_preset ?? "");
-    setStoreName(s.store_name     ?? "Luxe Boutique");
+    setStoreName(s.store_name     ?? "");
     setStoreEmail(s.store_email   ?? "");
     setStoreCurrency(s.store_currency ?? "USD");
     setStoreTimezone(s.store_timezone ?? "UTC");
@@ -971,14 +971,14 @@ export default function AdminSettingsPage() {
                             label="Sender Display Name"
                             value={senderName}
                             onChange={setSenderName}
-                            placeholder="Luxe Boutique Concierge"
+                            placeholder="Your Store Concierge"
                             hint="Name shown on outbound customer messages and receipts."
                           />
                           <Field
                             label="Store Notification / Sender Email"
                             value={senderEmail}
                             onChange={setSenderEmail}
-                            placeholder="concierge@luxeboutique.com"
+                            placeholder="concierge@yourdomain.com"
                             hint="Address used for system dispatches and order alerts."
                           />
                         </div>
@@ -1067,7 +1067,7 @@ export default function AdminSettingsPage() {
                     <div className="p-8 space-y-5">
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                         <div className="sm:col-span-2">
-                          <Field label="Store Name" value={storeName} onChange={setStoreName} placeholder="Luxe Boutique" />
+                          <Field label="Store Name" value={storeName} onChange={setStoreName} placeholder="Your Boutique Name" />
                         </div>
                         <div className="sm:col-span-2">
                           <Field label="Contact / Reply-To Email" value={storeEmail} onChange={setStoreEmail}
@@ -1512,7 +1512,7 @@ export default function AdminSettingsPage() {
                         { key: "api_key",             label: "API Key (Consumer Key)",       isSecret: false, hint: "developer.x.com → Your App → Keys & Tokens → API Key." },
                         { key: "api_secret",          label: "API Secret (Consumer Secret)", isSecret: true,  hint: "developer.x.com → Your App → Keys & Tokens → API Secret." },
                         { key: "bearer_token",        label: "Bearer Token",                 isSecret: true,  hint: "Used for App-only read-only API v2 access." },
-                        { key: "access_token",        label: "Access Token",                 isSecret: false, hint: "Authorises API calls on behalf of your @luxeboutique X account." },
+                        { key: "access_token",        label: "Access Token",                 isSecret: false, hint: "Authorises API calls on behalf of your store X account." },
                         { key: "access_token_secret", label: "Access Token Secret",          isSecret: true,  hint: "Paired with the Access Token. Regenerate if compromised." },
                       ]}
                     />

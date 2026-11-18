@@ -13,7 +13,7 @@ import {
   MdWarning
 } from "react-icons/md";
 import AdminLayout from "./AdminLayout";
-import { useAuth } from "@/contexts/AuthContext";
+import { getAdminAuthHeaders, useAuth } from "@/contexts/AuthContext";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -21,7 +21,7 @@ type OrderItem = { name: string; qty: number; price: number };
 type Order = { id: string; total: number; status: string; createdAt: string; items: OrderItem[] };
 
 type Stats = {
-  role: "ADMIN" | "SUPER_ADMIN";
+  role: "ADMIN" | "SUPER_ADMIN" | "PLATFORM_ADMIN";
   totalRevenue: number;
   totalOrders: number;
   avgOrderValue: number;
@@ -164,7 +164,7 @@ function TopProductsPanel({ products }: { products: { name: string; revenue: num
 
 // ── Super-admin overview panel ─────────────────────────────────────────────────
 
-function SuperAdminPanel({ stats }: { stats: Stats }) {
+function SuperAdminPanel({ stats, isPlatformAdmin }: { stats: Stats; isPlatformAdmin: boolean }) {
   return (
     <div className="space-y-6 sm:y-8">
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
@@ -223,7 +223,7 @@ function SuperAdminPanel({ stats }: { stats: Stats }) {
         </div>
       </div>
 
-      <SaaSStoreManager />
+      {isPlatformAdmin && <SaaSStoreManager />}
     </div>
   );
 }
@@ -232,7 +232,10 @@ function SaaSStoreManager() {
   const { data: stores, refetch: refetchStores } = useQuery<any[]>({
     queryKey: ["admin-stores"],
     queryFn: async () => {
-      const res = await fetch("/api/admin/stores");
+      const res = await fetch("/api/admin/stores", {
+        credentials: "include",
+        headers: getAdminAuthHeaders(),
+      });
       if (!res.ok) throw new Error("Failed to load stores");
       return res.json();
     },
@@ -302,7 +305,11 @@ function SaaSStoreManager() {
                         <button
                           onClick={async () => {
                             if (confirm(`Are you sure you want to unsuspend "${store.name}"?`)) {
-                              const res = await fetch(`/api/admin/stores/${store.id}/unsuspend`, { method: "POST" });
+                              const res = await fetch(`/api/admin/stores/${store.id}/unsuspend`, {
+                                method: "POST",
+                                credentials: "include",
+                                headers: getAdminAuthHeaders(),
+                              });
                               if (res.ok) refetchStores();
                             }
                           }}
@@ -314,7 +321,11 @@ function SaaSStoreManager() {
                         <button
                           onClick={async () => {
                             if (confirm(`Are you sure you want to suspend "${store.name}" and block all public access immediately?`)) {
-                              const res = await fetch(`/api/admin/stores/${store.id}/suspend`, { method: "POST" });
+                              const res = await fetch(`/api/admin/stores/${store.id}/suspend`, {
+                                method: "POST",
+                                credentials: "include",
+                                headers: getAdminAuthHeaders(),
+                              });
                               if (res.ok) refetchStores();
                             }
                           }}
@@ -434,17 +445,25 @@ export default function AdminDashboardPage() {
   const { data: stats, isLoading } = useQuery<Stats>({
     queryKey: ["admin-stats"],
     queryFn: async () => {
-      const res = await fetch("/api/admin/stats");
+      const res = await fetch("/api/admin/stats", {
+        credentials: "include",
+        headers: getAdminAuthHeaders(),
+      });
       if (!res.ok) throw new Error("Failed to load stats");
       return res.json();
     },
     staleTime: 30_000,
   });
 
-  const isSuperAdmin = user?.role === "SUPER_ADMIN";
-  const title        = isSuperAdmin ? "Executive Overview" : "Operations Dashboard";
-  const badge        = isSuperAdmin ? "Super Admin" : "Admin";
-  const badgeColor   = isSuperAdmin ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700";
+  const isPlatformAdmin = user?.role === "PLATFORM_ADMIN";
+  const isSuperAdmin    = user?.role === "SUPER_ADMIN" || isPlatformAdmin;
+  const title           = isPlatformAdmin ? "Platform Command Center" : isSuperAdmin ? "Executive Overview" : "Operations Dashboard";
+  const badge           = isPlatformAdmin ? "Platform Admin" : isSuperAdmin ? "Super Admin" : "Admin";
+  const badgeColor      = isPlatformAdmin
+    ? "bg-purple-100 text-purple-800"
+    : isSuperAdmin
+    ? "bg-emerald-100 text-emerald-800"
+    : "bg-slate-100 text-slate-700";
 
   return (
     <AdminLayout sidebar="main">
@@ -473,7 +492,7 @@ export default function AdminDashboardPage() {
             <div className="text-red-500 font-[Manrope] text-sm">Failed to load stats. Please refresh.</div>
           </div>
         ) : isSuperAdmin ? (
-          <SuperAdminPanel stats={stats} />
+          <SuperAdminPanel stats={stats} isPlatformAdmin={isPlatformAdmin} />
         ) : (
           <AdminPanel stats={stats} />
         )}

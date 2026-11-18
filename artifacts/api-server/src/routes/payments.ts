@@ -18,7 +18,7 @@ import {
 import { requireAdmin, getSessionUser } from "../middleware/requireAdmin";
 import { paymentService, type PaymentProviderType } from "../services/payments";
 import { encryptCredential } from "../services/credentialVault";
-import { sendEmail, buildOrderConfirmationEmail, getStoreUrl } from "../services/mailer";
+import { sendEmail, buildOrderConfirmationEmail, getStoreUrl, loadBrandingCache } from "../services/mailer";
 import { sendWhatsAppNotification, buildWhatsAppOrderConfirmationMessage } from "../services/whatsappService";
 import { eventBus } from "../lib/eventBus";
 import { type TenantRequest } from "../middleware/tenantContext";
@@ -459,7 +459,7 @@ router.post("/initialize", async (req: TenantRequest, res: Response) => {
   }
 
   const storeId = req.storeId!;
-  const sessionUser = await getSessionUser(req);
+  const sessionUser = await getSessionUser(req, storeId);
   const rawCookie = req.cookies?.["luxe_cart"] as string | undefined;
   
   const candidateSessionIds: string[] = [];
@@ -694,7 +694,8 @@ router.get("/verify/:reference", async (req: TenantRequest, res: Response) => {
     });
 
     // Auto-fulfillment & notifications
-    getStoreUrl(storeId).then((storeUrl) => {
+    Promise.all([getStoreUrl(storeId), loadBrandingCache(storeId)]).then(([storeUrl, brand]) => {
+      const storeName = brand?.store_name;
       const items = Array.isArray(order.items) ? order.items.map((i: any) => ({ name: i.name, qty: i.qty ?? i.quantity ?? 1, price: i.price ?? 0 })) : [];
       const emailData = buildOrderConfirmationEmail({
         orderId: order.id,
@@ -702,6 +703,8 @@ router.get("/verify/:reference", async (req: TenantRequest, res: Response) => {
         items,
         total: order.total,
         storeUrl,
+        storeId,
+        storeName,
       });
       sendEmail({ to: order.customerEmail, ...emailData, storeId }).catch(() => {});
 
@@ -712,6 +715,7 @@ router.get("/verify/:reference", async (req: TenantRequest, res: Response) => {
         total: order.total,
         itemSummary,
         orderUrl: `${storeUrl}/account/orders`,
+        storeName,
       });
       sendWhatsAppNotification(order.customerEmail, waText, storeId).catch(() => {});
     }).catch(() => {});

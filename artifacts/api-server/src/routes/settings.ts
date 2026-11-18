@@ -1,7 +1,7 @@
 import { Router, type Response } from "express";
 import { createHash, randomBytes, randomUUID } from "crypto";
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { requireAdmin, getSessionUser } from "../middleware/requireAdmin";
+import { requireAdmin, requirePlatformAdmin, getSessionUser } from "../middleware/requireAdmin";
 import { eprolo } from "../services/eprolo";
 import { sendEmail, loadBrandingCache } from "../services/mailer";
 import { db, apiKeysTable, appSettingsTable, providerPluginsTable, storesTable } from "@workspace/db";
@@ -14,7 +14,7 @@ router.use("/settings", requireAdmin);
 router.use("/apikeys", requireAdmin);
 router.use("/providers", requireAdmin);
 
-const DEFAULT_SETTINGS: Record<string, string> = { store_name: "LUXE BOUTIQUE" };
+const DEFAULT_SETTINGS: Record<string, string> = {};
 const SECRET_SETTINGS = new Set([
   "cloudinary_api_secret", "paystack_secret_key", "flutterwave_secret_key",
   "stripe_secret_key", "eprolo_api_key", "eprolo_api_secret", "smtp_pass",
@@ -120,13 +120,8 @@ router.put("/settings/tenant-domain", async (req: TenantRequest, res: Response) 
   }
 });
 
-router.get("/admin/stores", async (req: TenantRequest, res: Response) => {
+router.get("/admin/stores", requirePlatformAdmin, async (_req: TenantRequest, res: Response) => {
   try {
-    const user = await getSessionUser(req).catch(() => null);
-    if (!user || user.role !== "SUPER_ADMIN") {
-      return res.status(403).json({ error: "Platform administration access required." });
-    }
-
     const stores = await db.select().from(storesTable);
     return res.json(stores);
   } catch (err: any) {
@@ -134,14 +129,9 @@ router.get("/admin/stores", async (req: TenantRequest, res: Response) => {
   }
 });
 
-router.post("/admin/stores/:id/suspend", async (req: TenantRequest, res: Response) => {
+router.post("/admin/stores/:id/suspend", requirePlatformAdmin, async (req: TenantRequest, res: Response) => {
   const { id } = req.params;
   try {
-    const user = await getSessionUser(req).catch(() => null);
-    if (!user || user.role !== "SUPER_ADMIN") {
-      return res.status(403).json({ error: "Platform administration access required." });
-    }
-
     await db.update(storesTable).set({
       status: "suspended",
       publishStatus: "SUSPENDED",
@@ -154,14 +144,9 @@ router.post("/admin/stores/:id/suspend", async (req: TenantRequest, res: Respons
   }
 });
 
-router.post("/admin/stores/:id/unsuspend", async (req: TenantRequest, res: Response) => {
+router.post("/admin/stores/:id/unsuspend", requirePlatformAdmin, async (req: TenantRequest, res: Response) => {
   const { id } = req.params;
   try {
-    const user = await getSessionUser(req).catch(() => null);
-    if (!user || user.role !== "SUPER_ADMIN") {
-      return res.status(403).json({ error: "Platform administration access required." });
-    }
-
     await db.update(storesTable).set({
       status: "active",
       publishStatus: "UNPUBLISHED",
@@ -180,8 +165,8 @@ router.get("/settings/google-config", async (req: TenantRequest, res: Response) 
   const settings = Object.fromEntries(rows.map((r) => [r.key, r.value]));
   
   return res.json({
-    clientId: process.env.GOOGLE_CLIENT_ID || settings.google_client_id || "",
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET || (settings.google_client_secret ? decryptCredential(settings.google_client_secret) : ""),
+    clientId: settings.google_client_id || process.env.GOOGLE_CLIENT_ID || "",
+    clientSecret: (settings.google_client_secret ? decryptCredential(settings.google_client_secret) : "") || process.env.GOOGLE_CLIENT_SECRET || "",
   });
 });
 
@@ -204,16 +189,17 @@ router.put("/settings", async (req: TenantRequest, res: Response) => {
 router.post("/settings/test/email", async (req: TenantRequest, res: Response) => {
   const storeId = req.storeId!;
   const settings = await readSettings(storeId);
-  const sentTo = settings.store_email || (req as any).user?.email;
+  const sentTo = settings.store_email || req.adminUser?.email;
+  const storeName = settings.store_name || req.store?.name || "Boutique";
   if (!sentTo) {
     return res.status(400).json({ error: "Store email address is not configured. Please save a Store Email in settings first." });
   }
   try {
     await sendEmail({
       to: sentTo,
-      subject: "Luxe Boutique Notification Test",
-      text: "Your Luxe Boutique notification settings are operational.",
-      html: "<p>Your Luxe Boutique notification settings are operational.</p>",
+      subject: `${storeName} Notification Test`,
+      text: `Your ${storeName} notification settings are operational.`,
+      html: `<p>Your <strong>${storeName}</strong> notification settings are operational.</p>`,
       storeId,
     });
     return res.json({ ok: true, sentTo });

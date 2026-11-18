@@ -36,7 +36,7 @@ export default function AdminTikTokPage() {
   const [appKey, setAppKey] = useState("");
   const [appSecret, setAppSecret] = useState("");
   const [shopId, setShopId] = useState("");
-  const [shopName, setShopName] = useState("Luxe Boutique TikTok Store");
+  const [shopName, setShopName] = useState("TikTok Storefront");
   const [autoSync, setAutoSync] = useState(true);
   const [liveCommerce, setLiveCommerce] = useState(true);
   const [commissionRate, setCommissionRate] = useState("15");
@@ -62,7 +62,7 @@ export default function AdminTikTokPage() {
       setAppKey(config.appKey || "");
       setAppSecret(config.appSecret || "");
       setShopId(config.shopId || "");
-      setShopName(config.shopName || "Luxe Boutique TikTok Store");
+      setShopName(config.shopName || "TikTok Storefront");
       setAutoSync(config.autoSyncProducts ?? true);
       setLiveCommerce(config.liveCommerceEnabled ?? true);
       setCommissionRate(config.creatorCommissionRate || "15");

@@ -15,7 +15,7 @@ const getLiveOrigin = (): string => {
   if (typeof window !== "undefined" && window.location && window.location.origin) {
     return window.location.origin;
   }
-  return "https://luxeboutique.store";
+  return "https://prigidcommerce.com";
 };
 
 export const PREBUILT_WHATSAPP_TEMPLATES: PrebuiltTemplateBlueprint[] = [

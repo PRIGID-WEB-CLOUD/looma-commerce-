@@ -38,8 +38,8 @@ const reviewSchema = z.object({
   comment: z.string().trim().min(1).max(2000),
 });
 
-async function sessionId(req: Request, res: Response) {
-  const user = await getSessionUser(req);
+async function sessionId(req: TenantRequest, res: Response) {
+  const user = await getSessionUser(req, req.storeId);
   if (user) return `user:${user.id}`;
   const existing = req.cookies?.[CART_COOKIE] as string | undefined;
   if (existing && /^[A-Za-z0-9_-]{40,}$/.test(existing)) return `anon:${existing}`;
@@ -243,7 +243,11 @@ router.post("/cart", validate(cartSchema), async (req: TenantRequest, res: Respo
   let selectedVariant: any = null;
   if (variantId) {
     const [foundVariant] = await db.select().from(productVariantsTable)
-      .where(and(eq(productVariantsTable.id, variantId), eq(productVariantsTable.productId, baseProduct.id)))
+      .where(and(
+        eq(productVariantsTable.id, variantId),
+        eq(productVariantsTable.productId, baseProduct.id),
+        eq(productVariantsTable.storeId, storeId)
+      ))
       .limit(1);
     if (foundVariant) selectedVariant = foundVariant;
   }
@@ -443,9 +447,9 @@ router.get("/reviews", async (req: TenantRequest, res: Response) => {
 });
 
 router.post("/reviews", async (req: TenantRequest, res: Response) => {
-  const user = await getSessionUser(req);
-  if (!user) return res.status(401).json({ error: "Sign in to write a review." });
   const storeId = req.storeId!;
+  const user = await getSessionUser(req, storeId);
+  if (!user) return res.status(401).json({ error: "Sign in to write a review." });
   const parsed = reviewSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Product, rating, and a review of 1–2000 characters are required." });
   const product = await productSnapshot(parsed.data.productId, storeId);

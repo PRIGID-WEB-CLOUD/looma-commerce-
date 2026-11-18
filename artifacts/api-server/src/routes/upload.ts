@@ -22,11 +22,14 @@ if (!fs.existsSync(uploadsDir)) {
 
 // Storage engine for multer
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    if (!fs.existsSync(uploadsDir)) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
+  destination: (req, _file, cb) => {
+    const storeId = (req as TenantRequest).storeId || "shared";
+    const safeStoreSegment = storeId.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const targetDir = path.join(uploadsDir, safeStoreSegment);
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
     }
-    cb(null, uploadsDir);
+    cb(null, targetDir);
   },
   filename: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
@@ -93,8 +96,11 @@ const handleUpload = async (req: TenantRequest, res: Response) => {
     const savedRecords = [];
     const urls: string[] = [];
 
+    const safeStoreSegment = storeId.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const cloudinaryFolder = `tenants/${storeId}/uploads`;
+
     for (const file of files) {
-      let fileUrl = `/api/uploads/${file.filename}`;
+      let fileUrl = `/api/uploads/${safeStoreSegment}/${file.filename}`;
       let publicId: string = randomUUID();
       let format = path.extname(file.filename).replace(".", "") || "jpg";
       let width: number | null = null;
@@ -102,7 +108,7 @@ const handleUpload = async (req: TenantRequest, res: Response) => {
 
       if (cloudinaryCfg.isConfigured && cloudinaryCfg.cloudName && cloudinaryCfg.cloudName !== "undefined") {
         try {
-          const cloudRes = await uploadToCloudinary(file.path, storeId);
+          const cloudRes = await uploadToCloudinary(file.path, storeId, cloudinaryFolder);
           if (cloudRes.url && !cloudRes.url.includes("/undefined/")) {
             fileUrl = cloudRes.url;
             publicId = cloudRes.publicId;
@@ -151,7 +157,7 @@ const handleUpload = async (req: TenantRequest, res: Response) => {
         width,
         height,
         bytes: file.size,
-        folder: cloudinaryCfg.isConfigured ? "luxe_boutique_uploads" : "uploads",
+        folder: cloudinaryCfg.isConfigured ? cloudinaryFolder : `uploads/${safeStoreSegment}`,
         createdAt: record.createdAt.toISOString(),
       });
     }

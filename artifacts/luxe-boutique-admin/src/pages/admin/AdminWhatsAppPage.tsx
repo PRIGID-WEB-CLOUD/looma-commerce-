@@ -940,7 +940,7 @@ export default function AdminWhatsAppPage() {
                           template={{
                             name: newTplName || "new_template_draft",
                             category: newTplCategory,
-                            body: newTplBody || "*[LUXE BOUTIQUE | DRAFT PREVIEW]*\n_Haute Couture & Private Client Services_\n\nDear *{{1}}*,\n\nYour order *#{{2}}* is confirmed.\n\n_Luxe Boutique Concierge Services_",
+                            body: newTplBody || "*[STORE CONCIERGE | DRAFT PREVIEW]*\n_Private Client Services_\n\nDear *{{1}}*,\n\nYour order *#{{2}}* is confirmed.\n\n_Store Concierge Services_",
                           }}
                           customParams={selectedPrebuilt?.defaultVariables ?? {}}
                         />

@@ -171,7 +171,7 @@ export class FlutterwavePaymentProvider implements IPaymentProvider {
         name: params.customerName || "Customer",
       },
       customizations: {
-        title: "Luxe Boutique Checkout",
+        title: `${(params.metadata?.storeName as string) || "Boutique"} Checkout`,
         description: `Order ${params.reference}`,
       },
       meta: {

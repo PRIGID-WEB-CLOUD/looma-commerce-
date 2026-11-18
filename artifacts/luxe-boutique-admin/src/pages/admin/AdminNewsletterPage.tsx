@@ -144,7 +144,7 @@ export default function AdminNewsletterPage() {
             <!-- Brand Header -->
             <tr>
               <td style="background-color: #080e0b; padding: 28px 32px; text-align: center;">
-                <span style="color: #ffffff; font-size: 15px; font-weight: 700; letter-spacing: 0.28em; text-transform: uppercase;">✦ Luxe Boutique</span>
+                <span style="color: #ffffff; font-size: 15px; font-weight: 700; letter-spacing: 0.28em; text-transform: uppercase;">✦ Store Dispatch</span>
               </td>
             </tr>
             <!-- Content -->
@@ -159,9 +159,9 @@ export default function AdminNewsletterPage() {
             <!-- Footer -->
             <tr>
               <td style="background-color: #f8f9ff; padding: 24px 32px; text-align: center; border-top: 1px solid #f1f3f9;">
-                <p style="font-size: 12px; font-weight: 600; color: #006c49; margin: 0 0 6px 0; letter-spacing: 0.1em; text-transform: uppercase;">Luxe Boutique Concierge</p>
-                <p style="font-size: 11px; color: #7c839b; margin: 0 0 10px 0;">Haute Couture &amp; Fine Accessories</p>
-                <p style="font-size: 10px; color: #b0b8cc; margin: 0;">You received this publication because you subscribed to Luxe Boutique updates.</p>
+                <p style="font-size: 12px; font-weight: 600; color: #006c49; margin: 0 0 6px 0; letter-spacing: 0.1em; text-transform: uppercase;">Boutique Concierge</p>
+                <p style="font-size: 11px; color: #7c839b; margin: 0 0 10px 0;">Curated Collections &amp; Client Services</p>
+                <p style="font-size: 10px; color: #b0b8cc; margin: 0;">You received this publication because you subscribed to store updates.</p>
               </td>
             </tr>
           </table>
@@ -871,7 +871,7 @@ export default function AdminNewsletterPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-bold text-[#e9edef] truncate flex items-center gap-1">
-                        Luxe Boutique
+                        Official Store Account
                         <span className="material-symbols-outlined text-[14px] text-[#00a884]">verified</span>
                       </p>
                       <p className="text-[10px] text-[#8696a0]">Verified Official Account</p>
@@ -1065,7 +1065,7 @@ export default function AdminNewsletterPage() {
                   <div className="p-6">
                     <div className="border border-[#e5eeff] rounded-xl overflow-hidden max-w-lg mx-auto shadow-sm">
                       <div className="bg-[#080e0b] px-8 py-5 text-center">
-                        <span className="text-white text-[12px] font-bold tracking-[0.2em] uppercase">✦ Luxe Boutique</span>
+                        <span className="text-white text-[12px] font-bold tracking-[0.2em] uppercase">✦ Store Dispatch</span>
                       </div>
                       <div className="bg-white p-8">
                         <p className="text-[11px] font-[Manrope] font-bold uppercase tracking-widest text-[#7c839b] mb-1">Subject</p>
@@ -1076,7 +1076,7 @@ export default function AdminNewsletterPage() {
                       </div>
                       <div className="bg-[#f8f9ff] px-8 py-4 text-center border-t border-[#f1f3f9]">
                         <p className="text-[10px] font-[Manrope] text-[#b0b8cc]">
-                          You're receiving this because you subscribed at Luxe Boutique.
+                          You're receiving this because you subscribed to this store.
                         </p>
                       </div>
                     </div>
@@ -1105,7 +1105,7 @@ export default function AdminNewsletterPage() {
                       <textarea
                         className="w-full bg-[#f8f9ff] border border-[#c6c6cd] rounded-lg px-4 py-3 font-[Manrope] text-sm outline-none focus:border-black transition-colors resize-none leading-relaxed"
                         rows={14}
-                        placeholder={"Dear subscriber,\n\nWe're excited to share what's new at Luxe Boutique…\n\nWith love,\nThe Luxe Boutique Team"}
+                        placeholder={"Dear subscriber,\n\nWe're excited to share what's new in our latest collection…\n\nWarm regards,\nThe Boutique Team"}
                         value={body}
                         onChange={e => setBody(e.target.value)}
                       />

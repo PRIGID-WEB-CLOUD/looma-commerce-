@@ -83,13 +83,17 @@ export async function seed() {
     },
   ]).onConflictDoNothing();
   console.log("✓ stores");
+  const DEFAULT_STORE_ID = "store-001";
+
   // ── Categories ──────────────────────────────────────────────────────────────
   await db.insert(categoriesTable).values([
-    { id: "cat-rtw",  name: "Ready-to-Wear", slug: "ready-to-wear", description: "Seasonal clothing collections." },
-    { id: "cat-acc",  name: "Accessories",   slug: "accessories",   description: "Bags, belts, scarves and more." },
-    { id: "cat-foot", name: "Footwear",      slug: "footwear",      description: "Handcrafted shoes and boots." },
-    { id: "cat-fine", name: "Fine Jewellery",slug: "fine-jewellery",description: "Precious stones and metals." },
-    { id: "cat-home", name: "Maison",        slug: "maison",        description: "Luxury homeware and objects." },
+    { id: "cat-rtw",  storeId: DEFAULT_STORE_ID, name: "Ready-to-Wear", slug: "ready-to-wear", description: "Seasonal clothing collections." },
+    { id: "cat-acc",  storeId: DEFAULT_STORE_ID, name: "Accessories",   slug: "accessories",   description: "Bags, belts, scarves and more." },
+    { id: "cat-foot", storeId: DEFAULT_STORE_ID, name: "Footwear",      slug: "footwear",      description: "Handcrafted shoes and boots." },
+    { id: "cat-fine", storeId: DEFAULT_STORE_ID, name: "Fine Jewellery",slug: "fine-jewellery",description: "Precious stones and metals." },
+    { id: "cat-home", storeId: DEFAULT_STORE_ID, name: "Maison",        slug: "maison",        description: "Luxury homeware and objects." },
+    { id: "cat-moretti-leather", storeId: "store-002", name: "Leathercraft", slug: "leathercraft", description: "Florentine handmade bags and footwear." },
+    { id: "cat-aurelia-gems",    storeId: "store-003", name: "High Jewelry", slug: "high-jewelry", description: "Certified diamonds and sapphires." },
   ]).onConflictDoNothing();
   console.log("✓ categories");
 
@@ -97,6 +101,18 @@ export async function seed() {
   // Fixed IDs so re-running is idempotent (onConflictDoNothing)
   const now = Date.now();
   await db.insert(productsTable).values([
+    {
+      id: "prod-moretti-001", storeId: "store-002", name: "Milano Calfskin Weekender", price: 2450, categoryId: "cat-moretti-leather", stock: 7,
+      imageUrl: "https://images.unsplash.com/photo-1553062407-98eeb64c6a62?q=80&w=1974&auto=format&fit=crop",
+      description: "Hand-burnished Tuscan leather weekender crafted in Milan.", tags: "leather,luggage,milano",
+      createdAt: new Date(now - 86400000 * 2),
+    },
+    {
+      id: "prod-aurelia-001", storeId: "store-003", name: "Ceylon Sapphire Solitaire Ring", price: 6900, categoryId: "cat-aurelia-gems", stock: 3,
+      imageUrl: "https://images.unsplash.com/photo-1605100804763-247f67b3557e?q=80&w=2070&auto=format&fit=crop",
+      description: "Certified 2.2ct Ceylon blue sapphire in hand-forged platinum.", tags: "sapphire,platinum,ring",
+      createdAt: new Date(now - 86400000 * 2),
+    },
     // ── New Arrivals (shown first on homepage) ──
     {
       id: "prod-001", name: "Cashmere Overcoat", price: 1850, categoryId: "cat-rtw", stock: 12,
@@ -282,7 +298,7 @@ export async function seed() {
       tags: "ready-to-wear,trousers,wool,tailoring",
       createdAt: new Date(now - 86400000 * 2.5),
     },
-  ]).onConflictDoNothing();
+  ].map((p) => ({ storeId: DEFAULT_STORE_ID, ...p }))).onConflictDoNothing();
   console.log("✓ products");
 
   // ── Product Variants ───────────────────────────────────────────────────────
@@ -408,46 +424,46 @@ export async function seed() {
     // prod-027 Wool Flannel Trousers
     { id: "var-027-48", productId: "prod-027", size: "IT 48", color: "Charcoal Melange", stock: 10, price: 580, sku: "TRS-CHR-48" },
     { id: "var-027-50", productId: "prod-027", size: "IT 50", color: "Charcoal Melange", stock: 14, price: 580, sku: "TRS-CHR-50" },
-  ]).onConflictDoNothing();
+  ].map((v) => ({ storeId: DEFAULT_STORE_ID, ...v }))).onConflictDoNothing();
   console.log("✓ product variants");
 
   // ── Product Reviews ────────────────────────────────────────────────────────
   await db.insert(reviewsTable).values([
-    { id: "rev-001", productId: "prod-001", rating: 5, authorName: "Lord Henry C.", comment: "The cashmere drape and weight are truly peerless. The hand-finished lining demonstrates world-class tailoring." },
-    { id: "rev-002", productId: "prod-002", rating: 5, authorName: "Camille D.", comment: "Exquisite silk charmeuse. Feels weightless on the skin and the ivory sheen is understated and elegant." },
-    { id: "rev-003", productId: "prod-003", rating: 5, authorName: "Alessandro M.", comment: "A genuine masterpiece of Italian cordwaining. The alligator scales are perfectly symmetrical." },
-    { id: "rev-004", productId: "prod-008", rating: 5, authorName: "Elena V.", comment: "Stunning brilliance and fire. The white gold setting is crisp and secure. Truly an heirloom item." },
-    { id: "rev-005", productId: "prod-012", rating: 5, authorName: "Julian S.", comment: "Magnificent Carrara marble. It commands the center of our dining room table with quiet authority." },
-    { id: "rev-006", productId: "prod-013", rating: 5, authorName: "Margot R.", comment: "The softest cashmere blanket I have ever owned. Exceptional craftsmanship." },
-    { id: "rev-007", productId: "prod-016", rating: 5, authorName: "Harrison T.", comment: "The micro-pavé diamonds catch the light subtly. Solid, weighty feel without being gaudy." },
-    { id: "rev-008", productId: "prod-022", rating: 5, authorName: "Seraphina K.", comment: "Flawless travel companion. The leather aroma and grain finish are sublime." },
+    { id: "rev-001", storeId: DEFAULT_STORE_ID, productId: "prod-001", rating: 5, authorName: "Lord Henry C.", comment: "The cashmere drape and weight are truly peerless. The hand-finished lining demonstrates world-class tailoring." },
+    { id: "rev-002", storeId: DEFAULT_STORE_ID, productId: "prod-002", rating: 5, authorName: "Camille D.", comment: "Exquisite silk charmeuse. Feels weightless on the skin and the ivory sheen is understated and elegant." },
+    { id: "rev-003", storeId: DEFAULT_STORE_ID, productId: "prod-003", rating: 5, authorName: "Alessandro M.", comment: "A genuine masterpiece of Italian cordwaining. The alligator scales are perfectly symmetrical." },
+    { id: "rev-004", storeId: DEFAULT_STORE_ID, productId: "prod-008", rating: 5, authorName: "Elena V.", comment: "Stunning brilliance and fire. The white gold setting is crisp and secure. Truly an heirloom item." },
+    { id: "rev-005", storeId: DEFAULT_STORE_ID, productId: "prod-012", rating: 5, authorName: "Julian S.", comment: "Magnificent Carrara marble. It commands the center of our dining room table with quiet authority." },
+    { id: "rev-006", storeId: DEFAULT_STORE_ID, productId: "prod-013", rating: 5, authorName: "Margot R.", comment: "The softest cashmere blanket I have ever owned. Exceptional craftsmanship." },
+    { id: "rev-007", storeId: DEFAULT_STORE_ID, productId: "prod-016", rating: 5, authorName: "Harrison T.", comment: "The micro-pavé diamonds catch the light subtly. Solid, weighty feel without being gaudy." },
+    { id: "rev-008", storeId: DEFAULT_STORE_ID, productId: "prod-022", rating: 5, authorName: "Seraphina K.", comment: "Flawless travel companion. The leather aroma and grain finish are sublime." },
   ]).onConflictDoNothing();
   console.log("✓ reviews");
 
   // ── Orders ──────────────────────────────────────────────────────────────────
   await db.insert(ordersTable).values([
-    { id: "ord-001", customerEmail: "audrey@example.com",   customerName: "Audrey Chen",    status: "DELIVERED",  total: 1600, items: [{ name: "Silk Charmeuse Blouse", qty: 1, price: 620 }, { name: "Gold-Clasp Evening Bag", qty: 1, price: 980 }], createdAt: new Date(now - 86400000 * 7)   },
-    { id: "ord-002", customerEmail: "marcus@example.com",   customerName: "Marcus Webb",    status: "PROCESSING", total: 1850, items: [{ name: "Cashmere Overcoat",       qty: 1, price: 1850 }],                                                        createdAt: new Date(now - 86400000 * 2)   },
-    { id: "ord-003", customerEmail: "isabelle@example.com", customerName: "Isabelle Morel", status: "PENDING",    total: 3400, items: [{ name: "Alligator Derby Shoes",   qty: 1, price: 3400 }],                                                        createdAt: new Date(now - 86400000 * 1)   },
-    { id: "ord-004", customerEmail: "james@example.com",    customerName: "James Harlow",   status: "SHIPPED",    total: 580,  items: [{ name: "Merino Turtleneck",       qty: 2, price: 290  }],                                                        createdAt: new Date(now - 86400000 * 0.5) },
-    { id: "ord-005", customerEmail: "sophia@example.com",   customerName: "Sophia Laurent", status: "DELIVERED",  total: 5800, items: [{ name: "Diamond Tennis Bracelet", qty: 1, price: 5800 }],                                                        createdAt: new Date(now - 86400000 * 15)  },
-    { id: "ord-006", customerEmail: "theo@example.com",     customerName: "Theo Hartmann",  status: "PROCESSING", total: 2200, items: [{ name: "Leather Trench Coat",     qty: 1, price: 2200 }],                                                        createdAt: new Date(now - 86400000 * 3)   },
+    { id: "ord-001", storeId: DEFAULT_STORE_ID, customerEmail: "audrey@example.com",   customerName: "Audrey Chen",    status: "DELIVERED",  total: 1600, items: [{ productId: "prod-002", name: "Silk Charmeuse Blouse", qty: 1, price: 620 }, { productId: "prod-004", name: "Gold-Clasp Evening Bag", qty: 1, price: 980 }], createdAt: new Date(now - 86400000 * 7)   },
+    { id: "ord-002", storeId: DEFAULT_STORE_ID, customerEmail: "marcus@example.com",   customerName: "Marcus Webb",    status: "PROCESSING", total: 1850, items: [{ productId: "prod-001", name: "Cashmere Overcoat",       qty: 1, price: 1850 }],                                                        createdAt: new Date(now - 86400000 * 2)   },
+    { id: "ord-003", storeId: DEFAULT_STORE_ID, customerEmail: "isabelle@example.com", customerName: "Isabelle Morel", status: "PENDING",    total: 3400, items: [{ productId: "prod-003", name: "Alligator Derby Shoes",   qty: 1, price: 3400 }],                                                        createdAt: new Date(now - 86400000 * 1)   },
+    { id: "ord-004", storeId: DEFAULT_STORE_ID, customerEmail: "james@example.com",    customerName: "James Harlow",   status: "SHIPPED",    total: 580,  items: [{ productId: "prod-005", name: "Merino Turtleneck",       qty: 2, price: 290  }],                                                        createdAt: new Date(now - 86400000 * 0.5) },
+    { id: "ord-005", storeId: DEFAULT_STORE_ID, customerEmail: "sophia@example.com",   customerName: "Sophia Laurent", status: "DELIVERED",  total: 5800, items: [{ productId: "prod-008", name: "Diamond Tennis Bracelet", qty: 1, price: 5800 }],                                                        createdAt: new Date(now - 86400000 * 15)  },
+    { id: "ord-006", storeId: DEFAULT_STORE_ID, customerEmail: "theo@example.com",     customerName: "Theo Hartmann",  status: "PROCESSING", total: 2200, items: [{ productId: "prod-007", name: "Leather Trench Coat",     qty: 1, price: 2200 }],                                                        createdAt: new Date(now - 86400000 * 3)   },
   ]).onConflictDoNothing();
   console.log("✓ orders");
 
   // ── Facebook Post Templates ───────────────────────────────────────────────
   await db.insert(facebookPostTemplatesTable).values([
-    { id: "fb-tpl-001", name: "New Season Launch", body: "✨ Introducing our Autumn/Winter Collection. Hand-crafted cashmere, bespoke leather outerwear, and timeless fine jewellery. Discover the lookbook now: {link}", postType: "Standard" },
-    { id: "fb-tpl-002", name: "Private VIP Event", body: "💎 Private Client Event: Members enjoy complimentary express shipping and 20% off selected luxury footwear this weekend with code LUXEVIP20.", postType: "Promotion" },
-    { id: "fb-tpl-003", name: "Atelier Showcase", body: "🧵 Behind the Craft: Each pair of our Alligator Derby shoes requires over 40 hours of hand-lasting by master artisans in Italy. Explore true luxury.", postType: "Story" },
+    { id: "fb-tpl-001", storeId: DEFAULT_STORE_ID, name: "New Season Launch", body: "✨ Introducing our Autumn/Winter Collection. Hand-crafted cashmere, bespoke leather outerwear, and timeless fine jewellery. Discover the lookbook now: {link}", postType: "Standard" },
+    { id: "fb-tpl-002", storeId: DEFAULT_STORE_ID, name: "Private VIP Event", body: "💎 Private Client Event: Members enjoy complimentary express shipping and 20% off selected luxury footwear this weekend with code LUXEVIP20.", postType: "Promotion" },
+    { id: "fb-tpl-003", storeId: DEFAULT_STORE_ID, name: "Atelier Showcase", body: "🧵 Behind the Craft: Each pair of our Alligator Derby shoes requires over 40 hours of hand-lasting by master artisans in Italy. Explore true luxury.", postType: "Story" },
   ]).onConflictDoNothing();
   console.log("✓ facebook post templates");
 
   // ── Twitter / X Content Templates ─────────────────────────────────────────
   await db.insert(twitterContentTemplatesTable).values([
-    { id: "tw-tpl-001", name: "New Arrival Release", body: "New Arrival: The Cashmere Overcoat in Charcoal. Grade-A Mongolian cashmere with hand-rolled silk lining. Shop online now: {link}" },
-    { id: "tw-tpl-002", name: "Editorial Spotlight", body: "Minimalism redefined. Discover our latest silk charmeuse blouses and tailored linen blazers. Explore the boutique." },
-    { id: "tw-tpl-003", name: "Rare Piece Reserve", body: "Only 3 pieces remaining: 18k Diamond Tennis Bracelet. Hand-set VS1 diamonds. Reserve yours before sold out: {link}" },
+    { id: "tw-tpl-001", storeId: DEFAULT_STORE_ID, name: "New Arrival Release", body: "New Arrival: The Cashmere Overcoat in Charcoal. Grade-A Mongolian cashmere with hand-rolled silk lining. Shop online now: {link}" },
+    { id: "tw-tpl-002", storeId: DEFAULT_STORE_ID, name: "Editorial Spotlight", body: "Minimalism redefined. Discover our latest silk charmeuse blouses and tailored linen blazers. Explore the boutique." },
+    { id: "tw-tpl-003", storeId: DEFAULT_STORE_ID, name: "Rare Piece Reserve", body: "Only 3 pieces remaining: 18k Diamond Tennis Bracelet. Hand-set VS1 diamonds. Reserve yours before sold out: {link}" },
   ]).onConflictDoNothing();
   console.log("✓ twitter content templates");
 
@@ -509,13 +525,14 @@ export async function seed() {
       body: "*[LUXE BOUTIQUE | PRIVATE VIP PREVIEW]*\n_Exclusive Invitation_\n\nExclusive for *{{1}}*,\n\nYou are cordially invited to our Private Client Autumn/Winter Preview.\nEnjoy early access to bespoke collections before public release.\n\nAccess Private Portal: {{2}}\n\n_Luxe Boutique Concierge Services_",
       status: "Approved",
     },
-  ]).onConflictDoNothing();
+  ].map((t) => ({ storeId: DEFAULT_STORE_ID, ...t }))).onConflictDoNothing();
   console.log("✓ whatsapp templates");
 
   // ── WhatsApp Journeys ───────────────────────────────────────────────────────
   await db.insert(whatsappJourneysTable).values([
     {
       id: "wa-jrn-001",
+      storeId: DEFAULT_STORE_ID,
       journeyId: "order_placed",
       icon: "receipt_long",
       title: "Order Confirmation & Live Tracking",
@@ -527,6 +544,7 @@ export async function seed() {
     },
     {
       id: "wa-jrn-002",
+      storeId: DEFAULT_STORE_ID,
       journeyId: "abandoned_cart_1h",
       icon: "shopping_bag",
       title: "Abandoned Bag White-Glove Recovery",
@@ -538,6 +556,7 @@ export async function seed() {
     },
     {
       id: "wa-jrn-003",
+      storeId: DEFAULT_STORE_ID,
       journeyId: "shipping_dispatch",
       icon: "local_shipping",
       title: "Live Shipping & Dispatch Tracking",
@@ -549,6 +568,7 @@ export async function seed() {
     },
     {
       id: "wa-jrn-004",
+      storeId: DEFAULT_STORE_ID,
       journeyId: "vip_welcome",
       icon: "diamond",
       title: "VIP Club Welcome & Concierge",
@@ -564,6 +584,7 @@ export async function seed() {
   // ── WhatsApp Opt-in Settings ───────────────────────────────────────────────
   await db.insert(whatsappOptinSettingsTable).values({
     id: "default",
+    storeId: DEFAULT_STORE_ID,
     optinKeyword: "JOIN",
     optoutKeyword: "STOP",
     doubleOptin: true,
@@ -572,50 +593,61 @@ export async function seed() {
 
   // ── Facebook & Social Connections ──────────────────────────────────────────
   await db.insert(facebookConnectionsTable).values([
-    { id: "conn-facebook",  connectionKey: "facebook",  active: true },
-    { id: "conn-instagram", connectionKey: "instagram", active: true },
-    { id: "conn-pixel",     connectionKey: "pixel",     active: true },
-    { id: "conn-messenger", connectionKey: "messenger", active: true },
+    { id: "conn-facebook",  storeId: DEFAULT_STORE_ID, connectionKey: "facebook",  active: true },
+    { id: "conn-instagram", storeId: DEFAULT_STORE_ID, connectionKey: "instagram", active: true },
+    { id: "conn-pixel",     storeId: DEFAULT_STORE_ID, connectionKey: "pixel",     active: true },
+    { id: "conn-messenger", storeId: DEFAULT_STORE_ID, connectionKey: "messenger", active: true },
   ]).onConflictDoNothing();
   console.log("✓ facebook connections");
 
   // ── Facebook Pixel Events ──────────────────────────────────────────────────
   await db.insert(facebookPixelEventsTable).values([
-    { id: "px-001", storeEvent: "PageView",         fbEvent: "PageView",         enabled: true },
-    { id: "px-002", storeEvent: "ViewProduct",      fbEvent: "ViewContent",      enabled: true },
-    { id: "px-003", storeEvent: "AddToCart",        fbEvent: "AddToCart",        enabled: true },
-    { id: "px-004", storeEvent: "InitiateCheckout", fbEvent: "InitiateCheckout", enabled: true },
-    { id: "px-005", storeEvent: "CompletePurchase", fbEvent: "Purchase",         enabled: true },
-    { id: "px-006", storeEvent: "AddToWishlist",    fbEvent: "AddToWishlist",    enabled: true },
-    { id: "px-007", storeEvent: "SearchProducts",   fbEvent: "Search",           enabled: true },
-    { id: "px-008", storeEvent: "ContactConcierge", fbEvent: "Contact",          enabled: true },
+    { id: "px-001", storeId: DEFAULT_STORE_ID, storeEvent: "PageView",         fbEvent: "PageView",         enabled: true },
+    { id: "px-002", storeId: DEFAULT_STORE_ID, storeEvent: "ViewProduct",      fbEvent: "ViewContent",      enabled: true },
+    { id: "px-003", storeId: DEFAULT_STORE_ID, storeEvent: "AddToCart",        fbEvent: "AddToCart",        enabled: true },
+    { id: "px-004", storeId: DEFAULT_STORE_ID, storeEvent: "InitiateCheckout", fbEvent: "InitiateCheckout", enabled: true },
+    { id: "px-005", storeId: DEFAULT_STORE_ID, storeEvent: "CompletePurchase", fbEvent: "Purchase",         enabled: true },
+    { id: "px-006", storeId: DEFAULT_STORE_ID, storeEvent: "AddToWishlist",    fbEvent: "AddToWishlist",    enabled: true },
+    { id: "px-007", storeId: DEFAULT_STORE_ID, storeEvent: "SearchProducts",   fbEvent: "Search",           enabled: true },
+    { id: "px-008", storeId: DEFAULT_STORE_ID, storeEvent: "ContactConcierge", fbEvent: "Contact",          enabled: true },
   ]).onConflictDoNothing();
   console.log("✓ facebook pixel events");
 
   // ── Facebook Audiences ─────────────────────────────────────────────────────
   await db.insert(facebookAudiencesTable).values([
-    { id: "aud-001", name: "High-Value Luxury Shoppers",        type: "Custom",     size: "1.2K",  status: "Active" },
-    { id: "aud-002", name: "Cart Abandoners (Last 30 Days)",   type: "Retargeting",size: "450",   status: "Active" },
-    { id: "aud-003", name: "Instagram & Facebook Engagers",     type: "Custom",     size: "3.8K",  status: "Active" },
-    { id: "aud-004", name: "VIP Client Lookalike 1%",           type: "Lookalike",  size: "24.5K", status: "Active" },
+    { id: "aud-001", storeId: DEFAULT_STORE_ID, name: "High-Value Luxury Shoppers",        type: "Custom",     size: "1.2K",  status: "Active" },
+    { id: "aud-002", storeId: DEFAULT_STORE_ID, name: "Cart Abandoners (Last 30 Days)",   type: "Retargeting",size: "450",   status: "Active" },
+    { id: "aud-003", storeId: DEFAULT_STORE_ID, name: "Instagram & Facebook Engagers",     type: "Custom",     size: "3.8K",  status: "Active" },
+    { id: "aud-004", storeId: DEFAULT_STORE_ID, name: "VIP Client Lookalike 1%",           type: "Lookalike",  size: "24.5K", status: "Active" },
   ]).onConflictDoNothing();
   console.log("✓ facebook audiences");
 
-  // ── Super-admin user (only if no admin exists yet) ──────────────────────────
+  // ── Store owner & Platform Admin users (idempotent) ─────────────────────────
   const { eq, or } = await import("drizzle-orm");
   const existing = await db.select({ id: usersTable.id })
     .from(usersTable)
-    .where(or(eq(usersTable.role, "ADMIN"), eq(usersTable.role, "SUPER_ADMIN")))
+    .where(or(eq(usersTable.role, "ADMIN"), eq(usersTable.role, "SUPER_ADMIN"), eq(usersTable.role, "PLATFORM_ADMIN")))
     .limit(1);
   if (existing.length === 0) {
-    await db.insert(usersTable).values({
-      id:           "user-super-admin",
-      name:         "LUXE Admin",
-      email:        "admin@luxeboutique.com",
-      role:         "SUPER_ADMIN",
-      passwordHash: "",
-    }).onConflictDoNothing();
-    console.log("✓ super admin user seeded (admin@luxeboutique.com)");
+    await db.insert(usersTable).values([
+      {
+        id:           "user-super-admin",
+        storeId:      DEFAULT_STORE_ID,
+        name:         "LUXE Admin",
+        email:        "admin@luxeboutique.com",
+        role:         "SUPER_ADMIN",
+        passwordHash: "",
+      },
+      {
+        id:           "user-platform-admin",
+        storeId:      DEFAULT_STORE_ID,
+        name:         "Prigid Platform Admin",
+        email:        "platform@prigidcommerce.com",
+        role:         "PLATFORM_ADMIN",
+        passwordHash: "",
+      },
+    ]).onConflictDoNothing();
+    console.log("✓ super admin & platform admin users seeded");
   } else {
     console.log("✓ admin already exists, skipping");
   }

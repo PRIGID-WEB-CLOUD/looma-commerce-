@@ -10,8 +10,7 @@
     "scripts"
   ],
   "scripts": {
-    "dev": "PORT=5001 npm run dev --workspace=@workspace/api-server & PORT=3005 npm run dev --workspace=@workspace/luxe-boutique-admin & PORT=3000 npm run dev --workspace=@workspace/luxe-boutique",
-    "dev:store": "PORT=5001 npm run dev --workspace=@workspace/api-server & PORT=3000 npm run dev --workspace=@workspace/luxe-boutique",
+    "dev": "PORT=5001 npm run dev --workspace=@workspace/api-server & PORT=3000 npm run dev --workspace=@workspace/luxe-boutique-admin",
     "dev:admin": "PORT=5001 npm run dev --workspace=@workspace/api-server & PORT=3000 npm run dev --workspace=@workspace/luxe-boutique-admin",
     "build": "node ./scripts/build.mjs",
     "build:tiered": "node ./scripts/build-tiered.mjs",

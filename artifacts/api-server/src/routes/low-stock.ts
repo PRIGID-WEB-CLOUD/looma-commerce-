@@ -1,9 +1,10 @@
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { db, productsTable, productVariantsTable, appSettingsTable, storesTable } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { requireAdmin } from "../middleware/requireAdmin";
 import { eventBus } from "../lib/eventBus";
-import { sendEmail, buildLowStockAlertEmail, getConfiguredSender, getStoreUrl } from "../services/mailer";
+import { sendEmail, buildLowStockAlertEmail, getConfiguredSender, getStoreUrl, loadBrandingCache, getBranding } from "../services/mailer";
 import { sendWhatsAppNotification, buildWhatsAppLowStockAlertMessage } from "../services/whatsappService";
 import { type TenantRequest } from "../middleware/tenantContext";
 
@@ -26,8 +27,8 @@ async function readSettings(storeId: string) {
 }
 
 async function writeSetting(key: string, value: string, storeId: string) {
-  await db.insert(appSettingsTable).values({ key, value, storeId, updatedAt: new Date() })
-    .onConflictDoUpdate({ target: [appSettingsTable.key, appSettingsTable.storeId], set: { value, updatedAt: new Date() } });
+  await db.insert(appSettingsTable).values({ id: randomUUID(), key, value, storeId, updatedAt: new Date() })
+    .onConflictDoUpdate({ target: [appSettingsTable.storeId, appSettingsTable.key], set: { value, updatedAt: new Date() } });
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -85,9 +86,11 @@ export async function checkAndEmitLowStock(storeId: string) {
 
   // Dispatch low stock email & WhatsApp alert
   try {
+    await loadBrandingCache(storeId);
+    const brandName = getBranding(storeId).store_name;
     const adminEmail = await getConfiguredSender(storeId);
     const adminUrl = await getStoreUrl(storeId);
-    const emailData = buildLowStockAlertEmail({ products, threshold, adminUrl });
+    const emailData = buildLowStockAlertEmail({ products, threshold, adminUrl, storeId, storeName: brandName });
     await sendEmail({ to: adminEmail, ...emailData, storeId });
 
     const itemList = products.map((p) => `• ${p.name}: *${p.stock} units left*`).join("\n");
@@ -96,6 +99,7 @@ export async function checkAndEmitLowStock(storeId: string) {
       threshold,
       itemList,
       adminUrl: `${adminUrl}/seller/products`,
+      storeName: brandName,
     });
     sendWhatsAppNotification(adminEmail, waText, storeId).catch(() => {});
   } catch (err) {

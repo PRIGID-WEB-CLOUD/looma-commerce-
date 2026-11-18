@@ -1,18 +1,19 @@
+import { randomUUID } from "crypto";
 import { Router } from "express";
 import { requireAdmin } from "../middleware/requireAdmin";
 import { db, appSettingsTable, channelCredentialsTable } from "@workspace/db";
 import { addEvent } from "./channels";
-import { and, eq, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { type TenantRequest } from "../middleware/tenantContext";
 
 const router = Router();
 
 // Public webhook endpoint for TikTok order sync & seller events
-router.post("/channels/tiktok/webhook", async (req, res) => {
+router.post("/channels/tiktok/webhook", async (req: TenantRequest, res) => {
   try {
     const payload = req.body;
     const shopId = payload?.shop_id;
-    let storeId = "store-main";
+    let storeId: string | undefined = req.storeId;
 
     if (shopId) {
       const [match] = await db.select({ storeId: channelCredentialsTable.storeId })
@@ -20,6 +21,10 @@ router.post("/channels/tiktok/webhook", async (req, res) => {
         .where(sql`${channelCredentialsTable.data}->>'tiktok_shop_id' = ${shopId}`)
         .limit(1);
       if (match) storeId = match.storeId;
+    }
+
+    if (!storeId) {
+      return res.json({ code: 0, message: "ignored_unmapped_shop" });
     }
 
     await addEvent(
@@ -44,11 +49,12 @@ router.get("/channels/tiktok/config", async (req: TenantRequest, res) => {
     const rows = await db.select().from(appSettingsTable).where(eq(appSettingsTable.storeId, storeId));
     const settings = Object.fromEntries(rows.map((r) => [r.key, r.value]));
     
+    const defaultShopName = `${req.store?.name || "Boutique"} TikTok Store`;
     return res.json({
       appKey: settings.tiktok_app_key || "",
       appSecret: settings.tiktok_app_secret ? "●●●●●●●●" : "",
       shopId: settings.tiktok_shop_id || "",
-      shopName: settings.tiktok_shop_name || "Luxe Boutique TikTok Store",
+      shopName: settings.tiktok_shop_name || defaultShopName,
       connected: Boolean(settings.tiktok_app_key && settings.tiktok_shop_id),
       autoSyncProducts: settings.tiktok_auto_sync === "true",
       liveCommerceEnabled: settings.tiktok_live_commerce === "true",
@@ -72,10 +78,11 @@ router.post("/channels/tiktok/config", async (req: TenantRequest, res) => {
       creatorCommissionRate,
     } = req.body;
 
+    const defaultShopName = `${req.store?.name || "Boutique"} TikTok Store`;
     const entries = [
       ["tiktok_app_key", appKey],
       ["tiktok_shop_id", shopId],
-      ["tiktok_shop_name", shopName || "Luxe Boutique TikTok Store"],
+      ["tiktok_shop_name", shopName || defaultShopName],
       ["tiktok_auto_sync", String(autoSyncProducts ?? true)],
       ["tiktok_live_commerce", String(liveCommerceEnabled ?? true)],
       ["tiktok_creator_commission", String(creatorCommissionRate ?? "15")],
@@ -89,7 +96,7 @@ router.post("/channels/tiktok/config", async (req: TenantRequest, res) => {
       if (value !== undefined) {
         await db
           .insert(appSettingsTable)
-          .values({ key, value, storeId, updatedAt: new Date() })
+          .values({ id: randomUUID(), key, value, storeId, updatedAt: new Date() })
           .onConflictDoUpdate({
             target: [appSettingsTable.storeId, appSettingsTable.key],
             set: { value, updatedAt: new Date() },

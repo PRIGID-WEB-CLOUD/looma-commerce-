@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { isSignInWithEmailLink, signInWithEmailLink, sendSignInLinkToEmail } from "firebase/auth";
 import { auth, isFirebaseOperational } from "@/lib/firebase";
@@ -8,8 +8,10 @@ type Step = "email" | "otp" | "bootstrap";
 
 export default function AdminLoginPage() {
   const [step, setStep]                   = useState<Step>("email");
-  const [loginMethod, setLoginMethod]     = useState<"magic_link" | "otp">(isFirebaseOperational ? "magic_link" : "otp");
+  const [loginMethod, setLoginMethod]     = useState<"magic_link" | "otp" | "password">(isFirebaseOperational ? "magic_link" : "otp");
   const [email, setEmail]                 = useState("");
+  const [password, setPassword]           = useState("");
+  const [brandName, setBrandName]         = useState("Prigid Commerce");
   const [bootstrapName, setBootstrapName] = useState("");
   const [bootstrapEmail, setBootstrapEmail] = useState("");
   const [bootstrapSecret, setBootstrapSecret] = useState("");
@@ -25,10 +27,23 @@ export default function AdminLoginPage() {
   const [, navigate] = useLocation();
 
   useEffect(() => {
-    if (!authLoading && (user?.role === "ADMIN" || user?.role === "SUPER_ADMIN")) {
+    if (!authLoading && (user?.role === "ADMIN" || user?.role === "SUPER_ADMIN" || user?.role === "PLATFORM_ADMIN")) {
       navigate("/");
     }
   }, [user, authLoading, navigate]);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/store/branding", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (active && data?.store_name) {
+          setBrandName(data.store_name);
+        }
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   // Handle incoming Firebase Magic Sign-In Link redirect on page load
   useEffect(() => {
@@ -50,11 +65,14 @@ export default function AdminLoginPage() {
                 throw new Error("No email received from credentials verification.");
               }
 
+              const idToken = await result.user.getIdToken();
+
               // Sync identity with our central database session manager
               const res = await fetch("/api/auth/firebase", {
                 method: "POST",
+                credentials: "include",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email: userEmail, uid: result.user.uid, name: result.user.displayName || "" }),
+                body: JSON.stringify({ idToken }),
               });
 
               if (!res.ok) {
@@ -63,13 +81,16 @@ export default function AdminLoginPage() {
               }
 
               const data = await res.json();
-              if (data.role !== "ADMIN" && data.role !== "SUPER_ADMIN") {
-                await fetch("/api/auth/logout", { method: "POST" });
+              if (data.role !== "ADMIN" && data.role !== "SUPER_ADMIN" && data.role !== "PLATFORM_ADMIN") {
+                await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
                 throw new Error("Access Denied: You do not have administrator permissions.");
               }
 
               if (data.token) {
                 localStorage.setItem("luxe_admin_token", data.token);
+              }
+              if (data.slug) {
+                document.cookie = `prigid_store_slug=${encodeURIComponent(data.slug)}; path=/; max-age=86400; SameSite=Lax`;
               }
               window.localStorage.removeItem("emailForSignIn");
               setInfo("Successfully logged in! Loading your dashboard...");
@@ -136,7 +157,45 @@ export default function AdminLoginPage() {
     return () => clearTimeout(t);
   }, [resendCooldown]);
 
-  // Handler 1: Firebase Magic Link Dispatcher
+  // Handler 1: Password Sign-In
+  const signInWithPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (loading) return;
+    setLoading(true); setError(""); setInfo("");
+    try {
+      const res = await fetch("/api/auth/seller/login", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Invalid email or password.");
+        setLoading(false);
+        return;
+      }
+      if (data.token) {
+        localStorage.setItem("luxe_admin_token", data.token);
+      }
+      if (data.slug) {
+        document.cookie = `prigid_store_slug=${encodeURIComponent(data.slug)}; path=/; max-age=86400; SameSite=Lax`;
+      }
+      const host = typeof window !== "undefined" ? window.location.hostname : "";
+      const isProdDomain = host === "prigidcommerce.com" || host.endsWith(".prigidcommerce.com");
+      if (isProdDomain && data.canonicalUrl) {
+        window.location.href = `${data.canonicalUrl.replace(/\/$/, "")}/dashboard`;
+        return;
+      }
+      await refetch();
+      navigate("/");
+    } catch {
+      setError("Network error. Please check your connection and try again.");
+      setLoading(false);
+    }
+  };
+
+  // Handler 2: Firebase Magic Link Dispatcher
   const sendMagicLink = async (e: React.FormEvent) => {
     e.preventDefault();
     if (loading) return;
@@ -144,7 +203,7 @@ export default function AdminLoginPage() {
     try {
       if (!isFirebaseOperational) {
         throw new Error(
-          "Firebase Magic Link services are currently restricted inside this sandboxed preview iframe. Please sign in with the OTP Code option instead, or open the app in a new browser tab to use magic links."
+          "Firebase Magic Link services are currently restricted inside this sandboxed preview iframe. Please sign in with Password or OTP Code instead, or open the app in a new browser tab to use magic links."
         );
       }
       const emailTrim = email.trim();
@@ -326,7 +385,7 @@ export default function AdminLoginPage() {
             <div className="w-8 h-8 bg-[#006c49] rounded flex items-center justify-center">
               <span className="material-symbols-outlined text-white text-[18px]">storefront</span>
             </div>
-            <span className="text-white font-[Manrope] font-bold text-[13px] tracking-[0.22em] uppercase">Luxe Boutique</span>
+            <span className="text-white font-[Manrope] font-bold text-[13px] tracking-[0.22em] uppercase">{brandName}</span>
           </div>
         </div>
 
@@ -376,7 +435,7 @@ export default function AdminLoginPage() {
           <div className="w-8 h-8 bg-[#006c49] rounded flex items-center justify-center">
             <span className="material-symbols-outlined text-white text-[18px]">storefront</span>
           </div>
-          <span className="font-bold text-[13px] tracking-[0.22em] uppercase text-[#0a0f0d]">Luxe Boutique</span>
+          <span className="font-bold text-[13px] tracking-[0.22em] uppercase text-[#0a0f0d]">{brandName}</span>
           <span className="ml-auto text-[10px] font-bold tracking-widest uppercase text-[#006c49] bg-[#006c49]/10 px-3 py-1 rounded-full">Seller Portal</span>
         </div>
 
@@ -454,6 +513,18 @@ export default function AdminLoginPage() {
                     <span className="material-symbols-outlined text-[15px]">pin</span>
                     OTP Code
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setLoginMethod("password")}
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      loginMethod === "password"
+                        ? "bg-white text-[#006c49] shadow-sm"
+                        : "text-slate-500 hover:text-[#0a0f0d]"
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[15px]">key</span>
+                    Password
+                  </button>
                 </div>
 
                 {/* Quick 1-Click Access for detected admins (Strictly Development / Demo Only) */}
@@ -500,14 +571,14 @@ export default function AdminLoginPage() {
                   <div className="flex-grow border-t border-slate-200"></div>
                 </div>
 
-                <form onSubmit={loginMethod === "magic_link" ? sendMagicLink : requestOtp} className="space-y-5">
+                <form onSubmit={loginMethod === "magic_link" ? sendMagicLink : loginMethod === "password" ? signInWithPassword : requestOtp} className="space-y-5">
                   {loginMethod === "magic_link" && !isFirebaseOperational && (
                     <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3 items-start">
                       <span className="material-symbols-outlined text-amber-500 text-[18px] shrink-0 mt-0.5">warning</span>
                       <div className="space-y-1">
                         <p className="text-amber-800 text-xs font-bold leading-tight">Firebase Link Restrictions</p>
                         <p className="text-amber-700 text-[11px] leading-relaxed">
-                          Magic links are restricted inside this sandboxed preview iframe. Please sign in with the <strong>OTP Code</strong> option instead, or open the app in a new window/tab to use magic links.
+                          Magic links are restricted inside this sandboxed preview iframe. Please sign in with the <strong>OTP Code</strong> or <strong>Password</strong> option instead, or open the app in a new window/tab to use magic links.
                         </p>
                       </div>
                     </div>
@@ -517,16 +588,29 @@ export default function AdminLoginPage() {
                     <input
                       type="email" required autoFocus
                       value={email} onChange={(e) => setEmail(e.target.value)}
-                      placeholder="admin@luxeboutique.com"
+                      placeholder="owner@yourboutique.com"
                       className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3.5 text-sm outline-none focus:border-[#006c49] focus:ring-2 focus:ring-[#006c49]/10 transition-all placeholder:text-slate-300"
                     />
                   </div>
-                  <button type="submit" disabled={loading || !email.trim()}
+                  {loginMethod === "password" && (
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold uppercase tracking-widest text-[#45464d]">Password</label>
+                      <input
+                        type="password" required
+                        value={password} onChange={(e) => setPassword(e.target.value)}
+                        placeholder="Enter your password"
+                        className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3.5 text-sm outline-none focus:border-[#006c49] focus:ring-2 focus:ring-[#006c49]/10 transition-all placeholder:text-slate-300"
+                      />
+                    </div>
+                  )}
+                  <button type="submit" disabled={loading || !email.trim() || (loginMethod === "password" && !password)}
                     className="w-full bg-[#0a0f0d] text-white py-4 rounded-xl font-bold text-[12px] tracking-[0.18em] uppercase hover:bg-[#006c49] transition-all active:scale-[0.98] disabled:opacity-60 flex items-center justify-center gap-2.5 shadow-lg shadow-black/10">
                     {loading ? (
                       <><span className="material-symbols-outlined text-[16px] animate-spin">refresh</span>Processing…</>
                     ) : loginMethod === "magic_link" ? (
                       <><span className="material-symbols-outlined text-[16px]">magic_button</span>Send Magic Link</>
+                    ) : loginMethod === "password" ? (
+                      <><span className="material-symbols-outlined text-[16px]">login</span>Sign In</>
                     ) : (
                       <><span className="material-symbols-outlined text-[16px]">mail</span>Send Sign-In Code</>
                     )}
@@ -567,7 +651,7 @@ export default function AdminLoginPage() {
                   <input
                     type="email" required
                     value={bootstrapEmail} onChange={(e) => setBootstrapEmail(e.target.value)}
-                    placeholder="admin@luxeboutique.com"
+                    placeholder="owner@yourboutique.com"
                     className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3.5 text-sm outline-none focus:border-[#006c49] focus:ring-2 focus:ring-[#006c49]/10 transition-all placeholder:text-slate-300"
                   />
                 </div>
@@ -652,15 +736,23 @@ export default function AdminLoginPage() {
               ))}
             </div>
 
-            <p className="text-center text-[12px] text-[#7c839b]">
-              Contact the store owner if you need access.
-            </p>
+            <div className="space-y-2 text-center">
+              <p className="text-[12px] text-[#7c839b]">
+                Starting a new boutique?{" "}
+                <Link href="/register" className="text-[#006c49] font-bold hover:underline">
+                  Launch a new store
+                </Link>
+              </p>
+              <p className="text-[12px] text-[#7c839b]">
+                Contact the store owner if you need team access.
+              </p>
+            </div>
           </div>
         </div>
 
         <div className="px-8 py-5 border-t border-slate-100 bg-white">
           <p className="text-center text-[11px] text-slate-400">
-            © {new Date().getFullYear()} Luxe Boutique — Seller Portal · All access is monitored and logged.
+            © {new Date().getFullYear()} {brandName} — Seller Portal · All access is monitored and logged.
           </p>
         </div>
       </div>

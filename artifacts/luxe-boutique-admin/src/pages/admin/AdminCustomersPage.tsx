@@ -262,8 +262,8 @@ export default function AdminCustomersPage() {
     );
   });
 
-  const admins = users.filter((u) => u.role === "ADMIN" || u.role === "SUPER_ADMIN");
-  const regularUsers = users.filter((u) => u.role !== "ADMIN" && u.role !== "SUPER_ADMIN");
+  const admins = users.filter((u) => u.role === "ADMIN" || u.role === "SUPER_ADMIN" || u.role === "PLATFORM_ADMIN");
+  const regularUsers = users.filter((u) => u.role !== "ADMIN" && u.role !== "SUPER_ADMIN" && u.role !== "PLATFORM_ADMIN");
 
   return (
     <AdminLayout sidebar="main">

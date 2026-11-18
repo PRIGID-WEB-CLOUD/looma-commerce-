@@ -14,13 +14,13 @@ const router = Router();
  *  - ADMIN       → operational snapshot (orders queue + catalog health)
  */
 router.get("/admin/stats", async (req: TenantRequest, res: Response) => {
-  const user = await getSessionUser(req);
-  if (!user || (user.role !== "ADMIN" && user.role !== "SUPER_ADMIN")) {
+  const user = await getSessionUser(req, req.storeId);
+  if (!user || (user.role !== "ADMIN" && user.role !== "SUPER_ADMIN" && user.role !== "PLATFORM_ADMIN")) {
     return res.status(403).json({ error: "Admin access required." });
   }
 
   const storeId = req.storeId!;
-  const isSuperAdmin = user.role === "SUPER_ADMIN";
+  const isSuperAdmin = user.role === "SUPER_ADMIN" || user.role === "PLATFORM_ADMIN";
 
   // ── Shared: orders + products ──────────────────────────────────────────────
 

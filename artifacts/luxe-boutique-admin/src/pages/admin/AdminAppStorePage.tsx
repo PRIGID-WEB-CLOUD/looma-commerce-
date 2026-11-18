@@ -777,8 +777,8 @@ export const APP_CONFIG_SCHEMA: Record<string, {
   "newsletter-broadcast": {
     title: "VIP Newsletter Settings",
     fields: [
-      { key: "senderName", label: "Sender Friendly Name", type: "text", placeholder: "Luxe Boutique VIP Concierge", hint: "The name that appears in your customer's inbox." },
-      { key: "senderEmail", label: "Sender Email Address", type: "text", placeholder: "concierge@luxeboutique.com", hint: "Must be a verified sender domain." },
+      { key: "senderName", label: "Sender Friendly Name", type: "text", placeholder: "Store VIP Concierge", hint: "The name that appears in your customer's inbox." },
+      { key: "senderEmail", label: "Sender Email Address", type: "text", placeholder: "concierge@yourdomain.com", hint: "Must be a verified sender domain." },
       { key: "newsletterAccentColor", label: "HTML Accent Color (Hex)", type: "text", placeholder: "#006c49", hint: "Primary brand accent color used in editorial newsletter templates." }
     ]
   },
@@ -1965,7 +1965,7 @@ export default function AdminAppStorePage() {
 
                     {/* Agreement notice */}
                     <p className="text-[11px] font-[Manrope] text-slate-500 leading-relaxed">
-                      By confirming, you authorize <strong>{installModalApp.name}</strong> to connect to your Luxe Boutique workspace. You can disconnect or manage permissions anytime from Settings.
+                      By confirming, you authorize <strong>{installModalApp.name}</strong> to connect to your store workspace. You can disconnect or manage permissions anytime from Settings.
                     </p>
                   </>
                 ) : (
@@ -2408,7 +2408,7 @@ export default function AdminAppStorePage() {
                                 <span className="text-[9px] text-slate-400 uppercase block font-[Manrope]">Authorized User</span>
                                 <div className="flex items-center gap-1 text-slate-700">
                                   <MdPerson className="text-xs text-slate-500" />
-                                  <span className="text-xs font-semibold font-[Manrope] truncate">administrator@luxeboutique.com</span>
+                                  <span className="text-xs font-semibold font-[Manrope] truncate">Store Administrator</span>
                                 </div>
                               </div>
                               <div className="space-y-0.5">
@@ -2634,7 +2634,7 @@ export default function AdminAppStorePage() {
                     <span className="text-xl">⚙️</span>
                     <h5 className="text-xs font-serif font-bold text-amber-900 mt-1">Automatic Cloud Deployment</h5>
                     <p className="text-[11px] font-[Manrope] text-amber-800 leading-relaxed mt-1">
-                      This integration is dynamically managed by the Luxe Boutique Core orchestrator. No manual configurations are required to utilize this service.
+                      This integration is dynamically managed by the platform orchestrator. No manual configurations are required to utilize this service.
                     </p>
                   </div>
                 )}

@@ -438,7 +438,9 @@ if (!db) {
     select: (fields?: any) => new QueryChain('select', null, fields),
     insert: (table: any) => new QueryChain('insert', table),
     update: (table: any) => new QueryChain('update', table),
-    delete: (table: any) => new QueryChain('delete', table)
+    delete: (table: any) => new QueryChain('delete', table),
+    execute: async () => [],
+    transaction: async (cb: (tx: any) => Promise<any>) => cb(db),
   };
 
   const dbData = loadDb();

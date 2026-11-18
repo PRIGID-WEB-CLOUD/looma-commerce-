@@ -488,7 +488,7 @@ export default function AdminTeamPage() {
                     type="email"
                     value={inviteEmail}
                     onChange={e => { setInviteEmail(e.target.value); setInviteError(null); }}
-                    placeholder="staff@luxeboutique.com"
+                    placeholder="staff@yourboutique.com"
                     className="w-full bg-[#f8f9ff] border border-[#c6c6cd] rounded-lg px-4 py-3 font-[Manrope] text-sm outline-none focus:border-black transition-colors"
                   />
                 </div>

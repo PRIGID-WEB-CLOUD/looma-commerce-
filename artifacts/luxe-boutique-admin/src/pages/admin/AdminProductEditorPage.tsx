@@ -567,7 +567,7 @@ export default function AdminProductEditorPage() {
     mutation.mutate();
   };
 
-  const seoTitle = form.seoTitle || (form.name ? `${form.name} | Luxe Boutique` : "Product | Luxe Boutique");
+  const seoTitle = form.seoTitle || (form.name || "Product");
   const seoDesc = form.seoDescription || form.description.slice(0, 120);
   const allImages = form.imageUrl
     ? [form.imageUrl, ...images.filter(i => i !== form.imageUrl)]
@@ -583,7 +583,7 @@ export default function AdminProductEditorPage() {
       }
       return window.location.origin;
     }
-    return "https://luxeboutique.com";
+    return "https://prigidcommerce.com";
   })();
   const liveProductUrl = productId ? `${storefrontOrigin}/products/${encodeURIComponent(productId)}` : null;
 
@@ -1571,7 +1571,7 @@ export default function AdminProductEditorPage() {
                       </label>
                       <input
                         className="w-full bg-[#f8f9ff] border border-[#c6c6cd] rounded-lg px-3 py-2 text-sm font-[Manrope] outline-none focus:border-black"
-                        placeholder={`${form.name} | Luxe Boutique`}
+                        placeholder={form.name || "Product SEO Title"}
                         value={form.seoTitle} onChange={e => setForm(f => ({ ...f, seoTitle: e.target.value }))} />
                     </div>
                     <div>

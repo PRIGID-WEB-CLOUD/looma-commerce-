@@ -197,14 +197,14 @@ export default function AdminOrdersPage() {
     setEmailType(type);
     const orderNum = order.id.slice(0, 8).toUpperCase();
     if (type === "RECEIPT") {
-      setCustomSubject(`Order Confirmation & Receipt #${orderNum} — Luxe Boutique`);
+      setCustomSubject(`Order Confirmation & Receipt #${orderNum}`);
       setCustomNote("Thank you for your patronage. We are preparing your order with utmost care.");
     } else if (type === "SHIPPING") {
-      setCustomSubject(`Your Order #${orderNum} Has Shipped — Luxe Boutique`);
-      setCustomNote("Your bespoke parcel has been securely dispatched. Delivery tracking details are below.");
+      setCustomSubject(`Your Order #${orderNum} Has Shipped`);
+      setCustomNote("Your parcel has been securely dispatched. Delivery tracking details are below.");
     } else {
-      setCustomSubject(`Concierge Update for Order #${orderNum} — Luxe Boutique`);
-      setCustomNote("Please find an update regarding your recent order with Luxe Boutique.");
+      setCustomSubject(`Concierge Update for Order #${orderNum}`);
+      setCustomNote("Please find an update regarding your recent order with us.");
     }
   };
 
@@ -245,7 +245,7 @@ export default function AdminOrdersPage() {
             <!-- Brand Header -->
             <tr>
               <td style="background-color: #080e0b; padding: 28px 32px; text-align: center;">
-                <span style="color: #ffffff; font-size: 15px; font-weight: 700; letter-spacing: 0.28em; text-transform: uppercase;">✦ Luxe Boutique</span>
+                <span style="color: #ffffff; font-size: 15px; font-weight: 700; letter-spacing: 0.28em; text-transform: uppercase;">✦ Order Dispatch</span>
               </td>
             </tr>
             <!-- Order Title & Status -->
@@ -303,7 +303,7 @@ export default function AdminOrdersPage() {
             <!-- Footer -->
             <tr>
               <td style="background-color: #080e0b; padding: 24px 32px; text-align: center;">
-                <p style="font-size: 11px; color: #ffffff; margin: 0 0 4px 0; letter-spacing: 0.15em; text-transform: uppercase;">Luxe Boutique Concierge</p>
+                <p style="font-size: 11px; color: #ffffff; margin: 0 0 4px 0; letter-spacing: 0.15em; text-transform: uppercase;">Store Client Concierge</p>
                 <p style="font-size: 10px; color: #8899a6; margin: 0;">If you have any questions, simply reply directly to this email.</p>
               </td>
             </tr>
@@ -1393,7 +1393,7 @@ export default function AdminOrdersPage() {
               <div className="p-3 bg-amber-50 border border-amber-200/60 rounded-xl text-[11px] text-amber-800 flex items-start gap-2">
                 <MdInfo className="text-base shrink-0 mt-0.5" />
                 <span>
-                  This email will include the complete branded Luxe Boutique receipt, itemized breakdown (${Number(emailModalOrder.total || 0).toFixed(2)}), delivery address, and concierge support signature.
+                  This email will include the complete store receipt, itemized breakdown (${Number(emailModalOrder.total || 0).toFixed(2)}), delivery address, and concierge support signature.
                 </span>
               </div>
             </div>

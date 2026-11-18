@@ -16,8 +16,9 @@ import { z } from "zod";
 import { eventBus } from "../lib/eventBus";
 import { decryptCredential } from "../services/credentialVault";
 import { cartPricing } from "./ecommerce";
-import { sendEmail, buildOrderConfirmationEmail, buildOrderStatusUpdateEmail, getStoreUrl } from "../services/mailer";
+import { sendEmail, buildOrderConfirmationEmail, buildOrderStatusUpdateEmail, getStoreUrl, loadBrandingCache } from "../services/mailer";
 import { checkAndEmitLowStock } from "./low-stock";
+import { checkProductQuota, checkTeamQuota } from "../lib/tenantLimits";
 import {
   sendWhatsAppNotification,
   buildWhatsAppOrderConfirmationMessage,
@@ -120,30 +121,52 @@ router.get("/store/branding", async (req: TenantRequest, res: Response) => {
     if (!store) return res.status(404).json({ error: "Store not found" });
 
     const user = await getSessionUser(req, store.id).catch(() => null);
-    const isAdmin = user && (user.role === "ADMIN" || user.role === "SUPER_ADMIN");
+    const isAdmin = user && (user.role === "ADMIN" || user.role === "SUPER_ADMIN" || user.role === "PLATFORM_ADMIN");
 
-    const meta = BOUTIQUE_METADATA[store.slug] || BOUTIQUE_METADATA["luxe-boutique"];
+    const rows = await db
+      .select()
+      .from(appSettingsTable)
+      .where(eq(appSettingsTable.storeId, store.id))
+      .catch(() => []);
+    const settings = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+
+    const neutralMeta = {
+      name: store.name || "Boutique",
+      short_name: (store.name || "BOUTIQUE").slice(0, 12).toUpperCase(),
+      tagline: "Curated Collections & Luxury Atelier",
+      primary_color: "#006c49",
+      bg_color: "#0f172a",
+      typography: "'Playfair Display', Georgia, serif",
+      hero_headline: `${store.name || "Curated"} <br /><span class="italic font-light">Collections</span>`,
+      hero_subheadline: "Discover our curated seasonal pieces, craftsmanship, and signature objects.",
+      hero_image: "",
+      valet: "Complimentary arrival assistance available.",
+      hospitality: "Private client styling and hospitality available by appointment.",
+      currency: store.currency || "USD",
+    };
+
+    const meta = BOUTIQUE_METADATA[store.slug] || neutralMeta;
 
     return res.json({
       store_id: store.id,
       store_slug: store.slug,
-      store_name: store.name || meta.name,
-      brand_logo_text: meta.short_name,
-      brand_tagline: meta.tagline,
-      store_email: "",
-      store_currency: store.currency || meta.currency || "USD",
-      store_timezone: "UTC",
+      store_name: settings.store_name || store.name || meta.name,
+      brand_logo_text: settings.brand_logo_text || meta.short_name,
+      brand_tagline: settings.brand_tagline || meta.tagline,
+      store_email: settings.store_email || "",
+      store_currency: settings.store_currency || store.currency || meta.currency || "USD",
+      store_timezone: settings.store_timezone || "UTC",
       isPublished: store.publishStatus === "PUBLISHED" || store.isPublished === true,
       isAdmin: Boolean(isAdmin),
-      brand_primary_color: meta.primary_color,
-      brand_bg_color: meta.bg_color,
-      brand_logo_url: "",
-      brand_typography: meta.typography,
-      brand_hero_headline: meta.hero_headline,
-      brand_hero_subheadline: meta.hero_subheadline,
-      brand_hero_image: meta.hero_image,
-      brand_valet_instructions: meta.valet,
-      brand_hospitality_notes: meta.hospitality,
+      brand_primary_color: settings.brand_primary_color || meta.primary_color,
+      brand_bg_color: settings.brand_bg_color || meta.bg_color,
+      brand_logo_url: settings.brand_logo_url || "",
+      brand_typography: settings.brand_typography || meta.typography,
+      brand_hero_headline: settings.brand_hero_headline || meta.hero_headline,
+      brand_hero_subheadline: settings.brand_hero_subheadline || meta.hero_subheadline,
+      brand_hero_image: settings.brand_hero_image || meta.hero_image,
+      brand_valet_instructions: settings.brand_valet_instructions || meta.valet,
+      brand_hospitality_notes: settings.brand_hospitality_notes || meta.hospitality,
     });
   } catch (error) {
     console.error("[Branding Error]", error);
@@ -151,8 +174,8 @@ router.get("/store/branding", async (req: TenantRequest, res: Response) => {
   }
 });
 
-async function checkoutSessionId(req: Request, res: Response) {
-  const user = await getSessionUser(req);
+async function checkoutSessionId(req: TenantRequest, res: Response) {
+  const user = await getSessionUser(req, req.storeId);
   if (user) return `user:${user.id}`;
   const existing = req.cookies?.[CART_COOKIE] as string | undefined;
   if (existing && /^[A-Za-z0-9_-]{40,}$/.test(existing)) return `anon:${existing}`;
@@ -173,7 +196,7 @@ async function enrichProduct(p: typeof productsTable.$inferSelect, storeId: stri
     ? (await db.select().from(categoriesTable).where(and(eq(categoriesTable.id, p.categoryId), eq(categoriesTable.storeId, storeId))).limit(1))[0]
     : null;
   const variants = await db.select().from(productVariantsTable)
-    .where(eq(productVariantsTable.productId, p.id));
+    .where(and(eq(productVariantsTable.productId, p.id), eq(productVariantsTable.storeId, storeId)));
   return {
     ...p,
     category: cat ? { id: cat.id, name: cat.name } : null,
@@ -267,9 +290,9 @@ const variantSchema = z.object({
 });
 
 router.get("/products", async (req: TenantRequest, res: Response) => {
-  const user = await getSessionUser(req);
-  const canManage = user && (user.role === "ADMIN" || user.role === "SUPER_ADMIN");
   const storeId = req.storeId!;
+  const user = await getSessionUser(req, storeId);
+  const canManage = user && (user.role === "ADMIN" || user.role === "SUPER_ADMIN" || user.role === "PLATFORM_ADMIN");
 
   const prods = await db.select().from(productsTable)
     .where(and(
@@ -282,11 +305,20 @@ router.get("/products", async (req: TenantRequest, res: Response) => {
 });
 
 router.post("/products", requireAdmin, validate(productSchema), async (req: TenantRequest, res: Response) => {
+  const storeId = req.storeId!;
+  const quota = await checkProductQuota(storeId, req.store);
+  if (!quota.allowed) {
+    return res.status(403).json({
+      error: `Product limit (${quota.limit}) reached for your ${quota.planTier} plan. Upgrade your plan to add more products.`,
+      code: "PLAN_QUOTA_EXCEEDED",
+    });
+  }
+
   const body = req.body as z.infer<typeof productSchema>;
   const allowed = ["name", "price", "categoryId", "stock", "trackQuantity", "status", "imageUrl", "description", "tags", "metaSyncEnabled", "eproloProductId"];
   const insertData: Record<string, unknown> = { 
     id: randomUUID(),
-    storeId: req.storeId!,
+    storeId,
   };
   for (const k of allowed) {
     if (k in body && (body as Record<string, unknown>)[k] !== undefined) {
@@ -294,15 +326,15 @@ router.post("/products", requireAdmin, validate(productSchema), async (req: Tena
     }
   }
   const [p] = await db.insert(productsTable).values(insertData as typeof productsTable.$inferInsert).returning();
-  checkAndEmitLowStock(req.storeId!).catch(() => {});
-  return res.status(201).json(await enrichProduct(p, req.storeId!));
+  checkAndEmitLowStock(storeId).catch(() => {});
+  return res.status(201).json(await enrichProduct(p, storeId));
 });
 
 router.get("/products/:id", async (req: TenantRequest, res: Response) => {
   const productId = req.params.id as string;
-  const user = await getSessionUser(req);
-  const canManage = user && (user.role === "ADMIN" || user.role === "SUPER_ADMIN");
   const storeId = req.storeId!;
+  const user = await getSessionUser(req, storeId);
+  const canManage = user && (user.role === "ADMIN" || user.role === "SUPER_ADMIN" || user.role === "PLATFORM_ADMIN");
 
   const rows = await db.select().from(productsTable).where(and(
     eq(productsTable.id, productId),
@@ -347,15 +379,16 @@ router.delete("/products/:id", requireAdmin, async (req: TenantRequest, res: Res
 });
 
 // ── Manual sync (stamp updatedAt to mark as manually synced) ──────────────────
-router.post("/products/:id/sync", requireAdmin, async (req, res) => {
+router.post("/products/:id/sync", requireAdmin, async (req: TenantRequest, res: Response) => {
   const productId = req.params.id as string;
-  const rows = await db.select().from(productsTable).where(eq(productsTable.id, productId)).limit(1);
+  const storeId = req.storeId!;
+  const rows = await db.select().from(productsTable).where(and(eq(productsTable.id, productId), eq(productsTable.storeId, storeId))).limit(1);
   if (!rows[0]) return res.status(404).json({ error: "Product not found" });
   const updates = req.body as Partial<typeof productsTable.$inferInsert>;
   const allowed = ["name", "price", "stock", "status", "imageUrl", "description", "tags"];
   const patch: Record<string, unknown> = {};
   for (const k of allowed) if (k in updates) patch[k] = (updates as Record<string, unknown>)[k];
-  const [updated] = await db.update(productsTable).set(patch).where(eq(productsTable.id, productId)).returning();
+  const [updated] = await db.update(productsTable).set(patch).where(and(eq(productsTable.id, productId), eq(productsTable.storeId, storeId))).returning();
   return res.json({ ok: true, product: updated, syncedAt: new Date().toISOString() });
 });
 
@@ -584,15 +617,18 @@ function addressSnapshot(value: string | Record<string, string>): CheckoutAddres
   );
 }
 
-async function paymentSetting(key: string) {
+async function paymentSetting(key: string, storeId: string) {
   const [row] = await db.select({ value: appSettingsTable.value })
-    .from(appSettingsTable).where(eq(appSettingsTable.key, key)).limit(1);
+    .from(appSettingsTable)
+    .where(and(eq(appSettingsTable.storeId, storeId), eq(appSettingsTable.key, key)))
+    .limit(1);
   return row?.value ? decryptCredential(row.value) : null;
 }
 
-async function findUsableCouponForCheckout(code: string, subtotal: number) {
+async function findUsableCouponForCheckout(code: string, subtotal: number, storeId: string) {
   const [coupon] = await db.select().from(couponsTable)
-    .where(eq(couponsTable.code, code.trim().toUpperCase())).limit(1);
+    .where(and(eq(couponsTable.storeId, storeId), eq(couponsTable.code, code.trim().toUpperCase())))
+    .limit(1);
   if (!coupon || !coupon.active || (coupon.expiresAt && coupon.expiresAt <= new Date())) {
     return { error: "Coupon code not found or expired." } as const;
   }
@@ -608,23 +644,24 @@ async function findUsableCouponForCheckout(code: string, subtotal: number) {
   return { coupon, discount } as const;
 }
 
-async function paystackSecret() {
-  const configured = await paymentSetting("paystack_secret_key");
+async function paystackSecret(storeId: string) {
+  const configured = await paymentSetting("paystack_secret_key", storeId);
   if (configured) return configured;
   const [provider] = await db.select().from(providerPluginsTable)
-    .where(eq(providerPluginsTable.name, "paystack")).limit(1);
+    .where(and(eq(providerPluginsTable.storeId, storeId), eq(providerPluginsTable.name, "paystack")))
+    .limit(1);
   return provider?.apiKey ? decryptCredential(provider.apiKey) : null;
 }
 
-async function paystackCurrency() {
-  const configured = await paymentSetting("store_currency");
+async function paystackCurrency(storeId: string) {
+  const configured = await paymentSetting("store_currency", storeId);
   return configured && ["GHS", "NGN", "USD", "ZAR", "KES"].includes(configured.toUpperCase())
     ? configured.toUpperCase()
     : "USD";
 }
 
-async function paystackRequest(path: string, init: RequestInit = {}) {
-  const secret = await paystackSecret();
+async function paystackRequest(path: string, storeId: string, init: RequestInit = {}) {
+  const secret = await paystackSecret(storeId);
   if (!secret) throw Object.assign(new Error("Paystack is not configured. Add a Paystack secret key in admin settings."), { statusCode: 503 });
   const response = await fetch(`https://api.paystack.co${path}`, {
     ...init,
@@ -688,19 +725,26 @@ async function tryAutoForwardToEprolo(order: typeof ordersTable.$inferSelect) {
   }
 }
 
-async function finalizePaidTransaction(reference: string, gatewayData: Record<string, unknown>) {
+async function finalizePaidTransaction(reference: string, gatewayData: Record<string, unknown>, expectedStoreId?: string) {
   const order = await db.transaction(async (tx) => {
     const [transaction] = await tx.select().from(paymentTransactionsTable)
-      .where(eq(paymentTransactionsTable.reference, reference)).limit(1);
+      .where(expectedStoreId
+        ? and(eq(paymentTransactionsTable.reference, reference), eq(paymentTransactionsTable.storeId, expectedStoreId))
+        : eq(paymentTransactionsTable.reference, reference))
+      .limit(1);
     if (!transaction) throw Object.assign(new Error("Payment transaction not found."), { statusCode: 404 });
+    const storeId = transaction.storeId;
+    if (!storeId) throw Object.assign(new Error("Payment transaction missing store context."), { statusCode: 400 });
     if (transaction.status === "failed") throw Object.assign(new Error("This payment transaction has failed."), { statusCode: 409 });
     if (transaction.orderId) {
-      const [existingOrder] = await tx.select().from(ordersTable).where(eq(ordersTable.id, transaction.orderId)).limit(1);
+      const [existingOrder] = await tx.select().from(ordersTable)
+        .where(and(eq(ordersTable.id, transaction.orderId), eq(ordersTable.storeId, storeId)))
+        .limit(1);
       if (existingOrder) return existingOrder;
     }
     if (gatewayData.status !== "success") {
       await tx.update(paymentTransactionsTable).set({ status: "failed", updatedAt: new Date() })
-        .where(eq(paymentTransactionsTable.id, transaction.id));
+        .where(and(eq(paymentTransactionsTable.id, transaction.id), eq(paymentTransactionsTable.storeId, storeId)));
       throw Object.assign(new Error("Payment was not successful."), { statusCode: 402 });
     }
     if (Number(gatewayData.amount) !== transaction.amount) {
@@ -712,12 +756,14 @@ async function finalizePaidTransaction(reference: string, gatewayData: Record<st
     let subtotal = 0;
     for (const item of metadata.items) {
       const [product] = await tx.select().from(productsTable)
-        .where(and(eq(productsTable.id, item.productId), eq(productsTable.status, "ACTIVE"))).limit(1);
+        .where(and(eq(productsTable.id, item.productId), eq(productsTable.storeId, storeId), eq(productsTable.status, "ACTIVE")))
+        .limit(1);
       if (!product) throw Object.assign(new Error(`Product ${item.productId} is no longer available.`), { statusCode: 409 });
       const stockCondition = or(eq(productsTable.trackQuantity, false), gte(productsTable.stock, item.quantity));
       const [reserved] = await tx.update(productsTable)
         .set({ stock: product.trackQuantity ? sql`${productsTable.stock} - ${item.quantity}` : sql`${productsTable.stock}` })
-        .where(and(eq(productsTable.id, product.id), stockCondition)).returning();
+        .where(and(eq(productsTable.id, product.id), eq(productsTable.storeId, storeId), stockCondition))
+        .returning();
       if (!reserved) throw Object.assign(new Error(`${product.name} is out of stock or has insufficient stock.`), { statusCode: 409 });
       subtotal += item.price * item.quantity;
       authoritativeItems.push({ productId: product.id, name: product.name, qty: item.quantity, price: item.price });
@@ -726,7 +772,8 @@ async function finalizePaidTransaction(reference: string, gatewayData: Record<st
     let discount = 0;
     if (metadata.couponCode) {
       const [coupon] = await tx.select().from(couponsTable)
-        .where(eq(couponsTable.code, metadata.couponCode.toUpperCase())).limit(1);
+        .where(and(eq(couponsTable.storeId, storeId), eq(couponsTable.code, metadata.couponCode.toUpperCase())))
+        .limit(1);
       if (!coupon || !coupon.active || (coupon.expiresAt && coupon.expiresAt <= new Date()) ||
           (coupon.maxUses != null && coupon.usedCount >= coupon.maxUses) ||
           subtotal < Number(coupon.minOrderAmount)) {
@@ -737,9 +784,13 @@ async function finalizePaidTransaction(reference: string, gatewayData: Record<st
         : Math.min(subtotal, Number(coupon.discountValue));
       const [redeemed] = await tx.update(couponsTable)
         .set({ usedCount: sql`${couponsTable.usedCount} + 1`, updatedAt: new Date() })
-        .where(and(eq(couponsTable.id, coupon.id), eq(couponsTable.active, true),
+        .where(and(
+          eq(couponsTable.id, coupon.id),
+          eq(couponsTable.storeId, storeId),
+          eq(couponsTable.active, true),
           or(isNull(couponsTable.expiresAt), gt(couponsTable.expiresAt, new Date())),
-          or(isNull(couponsTable.maxUses), lt(couponsTable.usedCount, coupon.maxUses)))).returning();
+          or(isNull(couponsTable.maxUses), lt(couponsTable.usedCount, coupon.maxUses))
+        )).returning();
       if (!redeemed) throw Object.assign(new Error("The paid checkout coupon is no longer available; payment requires manual review."), { statusCode: 409 });
     }
 
@@ -749,6 +800,7 @@ async function finalizePaidTransaction(reference: string, gatewayData: Record<st
     }
     const [created] = await tx.insert(ordersTable).values({
       id: randomUUID(),
+      storeId,
       customerName: metadata.customerName,
       customerId: metadata.customerId,
       customerEmail: metadata.customerEmail,
@@ -764,6 +816,7 @@ async function finalizePaidTransaction(reference: string, gatewayData: Record<st
     }).returning();
     await tx.insert(orderItemsTable).values(authoritativeItems.map((item) => ({
       id: randomUUID(),
+      storeId,
       orderId: created.id,
       productId: item.productId,
       variantId: item.variantId ?? null,
@@ -776,7 +829,7 @@ async function finalizePaidTransaction(reference: string, gatewayData: Record<st
     })));
     await tx.update(paymentTransactionsTable).set({
       status: "paid", orderId: created.id, verifiedAt: new Date(), updatedAt: new Date(),
-    }).where(eq(paymentTransactionsTable.id, transaction.id));
+    }).where(and(eq(paymentTransactionsTable.id, transaction.id), eq(paymentTransactionsTable.storeId, storeId)));
     return created;
   });
 
@@ -787,7 +840,8 @@ async function finalizePaidTransaction(reference: string, gatewayData: Record<st
   void tryAutoForwardToEprolo(order);
 
   // Dispatch order confirmation email & WhatsApp notification asynchronously
-  getStoreUrl(order.storeId).then((storeUrl) => {
+  Promise.all([getStoreUrl(order.storeId), loadBrandingCache(order.storeId)]).then(([storeUrl, brand]) => {
+    const storeName = brand?.store_name;
     const items = Array.isArray(order.items) ? order.items.map((i: any) => ({ name: i.name, qty: i.qty ?? i.quantity ?? 1, price: i.price ?? 0 })) : [];
     const emailData = buildOrderConfirmationEmail({
       orderId: order.id,
@@ -795,6 +849,8 @@ async function finalizePaidTransaction(reference: string, gatewayData: Record<st
       items,
       total: order.total,
       storeUrl,
+      storeId: order.storeId,
+      storeName,
     });
     sendEmail({ to: order.customerEmail, ...emailData, storeId: order.storeId }).catch(() => {});
 
@@ -805,6 +861,7 @@ async function finalizePaidTransaction(reference: string, gatewayData: Record<st
       total: order.total,
       itemSummary,
       orderUrl: `${storeUrl}/account/orders`,
+      storeName,
     });
     sendWhatsAppNotification(order.customerEmail, waText, order.storeId).catch(() => {});
   }).catch(() => {});
@@ -814,19 +871,20 @@ async function finalizePaidTransaction(reference: string, gatewayData: Record<st
 
 // Payment endpoints are unified and handled via paymentsRouter (/api/payments/*)
 
-async function verifyPaystackReference(reference: string) {
-  return paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`);
+async function verifyPaystackReference(reference: string, storeId: string) {
+  return paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, storeId);
 }
 
 // Order creation is payment-gated. Legacy clients may call this after redirect;
 // the payment reference is verified again and the idempotent finalizer is used.
-router.post("/orders", async (req, res) => {
+router.post("/orders", async (req: TenantRequest, res: Response) => {
+  const storeId = req.storeId!;
   const parsed = checkoutSchema.safeParse(req.body);
   if (!parsed.success || !parsed.data.paystackRef) {
     return res.status(402).json({ error: "Complete payment before creating an order." });
   }
-  const data = await verifyPaystackReference(parsed.data.paystackRef);
-  const order = await finalizePaidTransaction(parsed.data.paystackRef, data);
+  const data = await verifyPaystackReference(parsed.data.paystackRef, storeId);
+  const order = await finalizePaidTransaction(parsed.data.paystackRef, data, storeId);
   return res.status(200).json(order);
 });
 
@@ -853,12 +911,15 @@ router.put("/orders/:id", requireAdmin, async (req: TenantRequest, res) => {
 
   if (parsed.data.status) {
     const updatedOrder = rows[0];
-    getStoreUrl(storeId).then((storeUrl) => {
+    Promise.all([getStoreUrl(storeId), loadBrandingCache(storeId)]).then(([storeUrl, brand]) => {
+      const storeName = brand?.store_name;
       const emailData = buildOrderStatusUpdateEmail({
         orderId: updatedOrder.id,
         customerName: updatedOrder.customerName,
         status: updatedOrder.status,
         storeUrl,
+        storeId,
+        storeName,
       });
       sendEmail({ to: updatedOrder.customerEmail, ...emailData, storeId }).catch(() => {});
 
@@ -867,6 +928,7 @@ router.put("/orders/:id", requireAdmin, async (req: TenantRequest, res) => {
         recipientName: updatedOrder.customerName,
         status: updatedOrder.status,
         orderUrl: `${storeUrl}/account/orders`,
+        storeName,
       });
       sendWhatsAppNotification(updatedOrder.customerEmail, waText, storeId).catch(() => {});
     }).catch(() => {});
@@ -892,12 +954,15 @@ router.put("/orders", requireAdmin, async (req: TenantRequest, res) => {
 
   if (parsed.data.status) {
     const updatedOrder = rows[0];
-    getStoreUrl(storeId).then((storeUrl) => {
+    Promise.all([getStoreUrl(storeId), loadBrandingCache(storeId)]).then(([storeUrl, brand]) => {
+      const storeName = brand?.store_name;
       const emailData = buildOrderStatusUpdateEmail({
         orderId: updatedOrder.id,
         customerName: updatedOrder.customerName,
         status: updatedOrder.status,
         storeUrl,
+        storeId,
+        storeName,
       });
       sendEmail({ to: updatedOrder.customerEmail, ...emailData, storeId }).catch(() => {});
 
@@ -906,6 +971,7 @@ router.put("/orders", requireAdmin, async (req: TenantRequest, res) => {
         recipientName: updatedOrder.customerName,
         status: updatedOrder.status,
         orderUrl: `${storeUrl}/account/orders`,
+        storeName,
       });
       sendWhatsAppNotification(updatedOrder.customerEmail, waText, storeId).catch(() => {});
     }).catch(() => {});
@@ -1064,8 +1130,9 @@ router.get("/users", requireAdmin, async (req: TenantRequest, res: Response) => 
     .from(usersTable)
     .where(and(
       eq(usersTable.storeId, storeId),
-      ne(usersTable.role, "ADMIN"), 
-      ne(usersTable.role, "SUPER_ADMIN")
+      ne(usersTable.role, "ADMIN"),
+      ne(usersTable.role, "SUPER_ADMIN"),
+      ne(usersTable.role, "PLATFORM_ADMIN")
     ))
     .orderBy(desc(usersTable.createdAt));
   return res.json(customers);
@@ -1142,98 +1209,315 @@ router.post("/coupons", requireAdmin, async (req: TenantRequest, res: Response) 
   return res.status(201).json(coupon);
 });
 
-router.put("/coupons/:id", requireAdmin, async (req, res) => {
+router.put("/coupons/:id", requireAdmin, async (req: TenantRequest, res: Response) => {
+  const storeId = req.storeId!;
   const updates: Record<string, unknown> = { updatedAt: new Date() };
   for (const key of ["description", "discountType", "active"]) if (key in req.body) updates[key] = req.body[key];
   for (const key of ["discountValue", "minOrderAmount", "maxUses", "usedCount"]) {
     if (key in req.body) updates[key] = req.body[key] == null ? null : Number(req.body[key]);
   }
   if ("expiresAt" in req.body) updates.expiresAt = req.body.expiresAt ? new Date(req.body.expiresAt) : null;
-  const [updated] = await db.update(couponsTable).set(updates).where(eq(couponsTable.id, req.params.id as string)).returning();
+  const [updated] = await db.update(couponsTable)
+    .set(updates)
+    .where(and(eq(couponsTable.id, req.params.id as string), eq(couponsTable.storeId, storeId)))
+    .returning();
   if (!updated) return res.status(404).json({ error: "Coupon not found" });
   return res.json(updated);
 });
 
-router.delete("/coupons/:id", requireAdmin, async (req, res) => {
-  await db.delete(couponsTable).where(eq(couponsTable.id, req.params.id as string));
+router.delete("/coupons/:id", requireAdmin, async (req: TenantRequest, res: Response) => {
+  const storeId = req.storeId!;
+  await db.delete(couponsTable).where(and(eq(couponsTable.id, req.params.id as string), eq(couponsTable.storeId, storeId)));
   return res.json({ ok: true });
 });
 
 // ── Team ──────────────────────────────────────────────────────────────────────
 
-router.get("/team", requireAdmin, async (_req, res) => {
-  const teamDb = await db.select().from(teamMembersTable);
-  const adminUsers = await db.select().from(usersTable)
-    .where(or(eq(usersTable.role, "ADMIN"), eq(usersTable.role, "SUPER_ADMIN")));
+function normalizeTeamStatus(rawStatus?: string | null): string {
+  const s = (rawStatus || "active").toLowerCase();
+  if (s === "invited") return "pending";
+  return s;
+}
 
-  const normalizedAdmins = adminUsers.map(user => ({
-    id: user.id,
-    email: user.email,
-    name: user.name || "Administrator",
-    role: user.role === "SUPER_ADMIN" ? "Owner" : "Admin",
-    status: "active",
-    invitedBy: null,
-    inviteToken: null,
-    lastLoginAt: null,
-    createdAt: user.createdAt,
-  }));
+router.get("/team", requireAdmin, async (req: TenantRequest, res: Response) => {
+  const storeId = req.storeId!;
+  const [teamDb, adminUsers] = await Promise.all([
+    db.select().from(teamMembersTable).where(eq(teamMembersTable.storeId, storeId)),
+    db.select().from(usersTable).where(and(
+      eq(usersTable.storeId, storeId),
+      or(eq(usersTable.role, "ADMIN"), eq(usersTable.role, "SUPER_ADMIN"))
+    )),
+  ]);
 
-  const normalizedTeam = teamDb.map(m => ({
-    id: m.id,
-    email: m.email,
-    name: m.name || "Team Member",
-    role: m.role || "Editor",
-    status: (m.status || "active").toLowerCase(),
-    invitedBy: m.invitedBy,
-    inviteToken: m.inviteToken,
-    lastLoginAt: m.lastLoginAt,
-    createdAt: m.createdAt,
-  }));
-
-  const combined = [...normalizedAdmins, ...normalizedTeam];
-  return res.json(combined);
-});
-
-router.post("/team/invite", requireAdmin, async (req, res) => {
-  const { email, role } = req.body as { email: string; role: string };
-  const token = randomUUID();
-  await db.insert(teamMembersTable).values({
-    id: randomUUID(), name: "", email, role: role ?? "EDITOR", status: "Invited",
-    inviteToken: token, inviteExpiresAt: new Date(Date.now() + 86400000 * 7),
+  const seenEmails = new Set<string>();
+  const normalizedTeam = teamDb.map((m) => {
+    seenEmails.add(m.email.toLowerCase());
+    return {
+      id: m.id,
+      email: m.email,
+      name: m.name || "Team Member",
+      role: m.role || "Editor",
+      status: normalizeTeamStatus(m.status),
+      invitedBy: null,
+      inviteToken: m.inviteToken,
+      inviteLink: m.inviteToken ? `/seller/accept-invite?token=${m.inviteToken}` : undefined,
+      lastLoginAt: null,
+      createdAt: m.invitedAt,
+    };
   });
-  return res.status(201).json({ ok: true, token });
+
+  const normalizedAdmins = adminUsers
+    .filter((user) => !seenEmails.has(user.email.toLowerCase()))
+    .map((user) => ({
+      id: user.id,
+      email: user.email,
+      name: user.name || "Administrator",
+      role: user.role === "SUPER_ADMIN" ? "Owner" : "Admin",
+      status: "active",
+      invitedBy: null,
+      inviteToken: null,
+      lastLoginAt: null,
+      createdAt: user.createdAt,
+    }));
+
+  return res.json([...normalizedAdmins, ...normalizedTeam]);
 });
 
-router.get("/team/accept", async (req, res) => {
+router.post("/team/invite", requireAdmin, async (req: TenantRequest, res: Response) => {
+  const storeId = req.storeId!;
+  const quota = await checkTeamQuota(storeId, req.store);
+  if (!quota.allowed) {
+    return res.status(403).json({
+      error: `Team member limit (${quota.limit}) reached for your ${quota.planTier} plan. Upgrade your plan to invite more staff.`,
+      code: "PLAN_QUOTA_EXCEEDED",
+    });
+  }
+
+  const { email, name, role } = req.body as { email?: string; name?: string; role?: string };
+  if (!email || !email.trim()) {
+    return res.status(400).json({ error: "Email address is required." });
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const [existing] = await db.select().from(teamMembersTable)
+    .where(and(eq(teamMembersTable.storeId, storeId), eq(teamMembersTable.email, normalizedEmail)))
+    .limit(1);
+  if (existing) {
+    return res.status(409).json({ error: "A team member with this email is already in your store." });
+  }
+
+  const id = randomUUID();
+  const token = randomUUID();
+  const cleanRole = role?.trim() || "Editor";
+  const [created] = await db.insert(teamMembersTable).values({
+    id,
+    storeId,
+    name: name?.trim() || "",
+    email: normalizedEmail,
+    role: cleanRole,
+    status: "Invited",
+    inviteToken: token,
+    inviteExpiresAt: new Date(Date.now() + 86400000 * 7),
+  }).returning();
+
+  const inviteLink = `/seller/accept-invite?token=${token}`;
+  return res.status(201).json({
+    ok: true,
+    id: created.id,
+    email: created.email,
+    name: created.name || "Team Member",
+    role: created.role,
+    status: "pending",
+    invitedBy: null,
+    inviteToken: token,
+    inviteLink,
+    lastLoginAt: null,
+    createdAt: created.invitedAt,
+    token,
+    emailSent: false,
+  });
+});
+
+router.put("/team/:id", requireAdmin, async (req: TenantRequest, res: Response) => {
+  const storeId = req.storeId!;
+  const memberId = req.params.id as string;
+  const { role, status } = req.body as { role?: string; status?: string };
+
+  const updates: Partial<typeof teamMembersTable.$inferInsert> = {};
+  if (role !== undefined) updates.role = role;
+  if (status !== undefined) updates.status = status;
+
+  const [updated] = await db.update(teamMembersTable)
+    .set(updates)
+    .where(and(eq(teamMembersTable.id, memberId), eq(teamMembersTable.storeId, storeId)))
+    .returning();
+
+  if (updated) {
+    if (role !== undefined) {
+      const targetUserRole = updated.role.toLowerCase() === "owner" ? "SUPER_ADMIN" : "ADMIN";
+      await db.update(usersTable)
+        .set({ role: targetUserRole })
+        .where(and(eq(usersTable.storeId, storeId), eq(usersTable.email, updated.email)));
+    }
+    return res.json({
+      id: updated.id,
+      email: updated.email,
+      name: updated.name || "Team Member",
+      role: updated.role,
+      status: normalizeTeamStatus(updated.status),
+      invitedBy: null,
+      inviteToken: updated.inviteToken,
+      lastLoginAt: null,
+      createdAt: updated.invitedAt,
+    });
+  }
+
+  // Also support role update if member row corresponds directly to an admin user in usersTable
+  if (role !== undefined) {
+    const targetUserRole = role.toLowerCase() === "owner" ? "SUPER_ADMIN" : "ADMIN";
+    const [updatedUser] = await db.update(usersTable)
+      .set({ role: targetUserRole })
+      .where(and(eq(usersTable.id, memberId), eq(usersTable.storeId, storeId)))
+      .returning();
+    if (updatedUser) {
+      return res.json({
+        id: updatedUser.id,
+        email: updatedUser.email,
+        name: updatedUser.name,
+        role: updatedUser.role === "SUPER_ADMIN" ? "Owner" : "Admin",
+        status: "active",
+        invitedBy: null,
+        inviteToken: null,
+        lastLoginAt: null,
+        createdAt: updatedUser.createdAt,
+      });
+    }
+  }
+
+  return res.status(404).json({ error: "Team member not found" });
+});
+
+router.post("/team/:id/resend", requireAdmin, async (req: TenantRequest, res: Response) => {
+  const storeId = req.storeId!;
+  const memberId = req.params.id as string;
+  const token = randomUUID();
+  const [updated] = await db.update(teamMembersTable)
+    .set({
+      inviteToken: token,
+      status: "Invited",
+      inviteExpiresAt: new Date(Date.now() + 86400000 * 7),
+    })
+    .where(and(eq(teamMembersTable.id, memberId), eq(teamMembersTable.storeId, storeId)))
+    .returning();
+
+  if (!updated) return res.status(404).json({ error: "Team member not found" });
+
+  return res.json({
+    ok: true,
+    id: updated.id,
+    email: updated.email,
+    name: updated.name || "Team Member",
+    role: updated.role,
+    status: "pending",
+    inviteToken: token,
+    inviteLink: `/seller/accept-invite?token=${token}`,
+    emailSent: false,
+  });
+});
+
+router.delete("/team/:id", requireAdmin, async (req: TenantRequest, res: Response) => {
+  const storeId = req.storeId!;
+  const memberId = req.params.id as string;
+  const [deleted] = await db.delete(teamMembersTable)
+    .where(and(eq(teamMembersTable.id, memberId), eq(teamMembersTable.storeId, storeId)))
+    .returning();
+
+  if (deleted) {
+    if (deleted.role.toLowerCase() !== "owner") {
+      await db.delete(usersTable).where(and(eq(usersTable.storeId, storeId), eq(usersTable.email, deleted.email)));
+    }
+    return res.json({ ok: true });
+  }
+
+  const [adminUser] = await db.select().from(usersTable)
+    .where(and(eq(usersTable.id, memberId), eq(usersTable.storeId, storeId)))
+    .limit(1);
+  if (!adminUser) return res.status(404).json({ error: "Team member not found" });
+  if (adminUser.role === "SUPER_ADMIN") {
+    return res.status(400).json({ error: "Store owner cannot be removed." });
+  }
+  await db.delete(usersTable).where(and(eq(usersTable.id, memberId), eq(usersTable.storeId, storeId)));
+  return res.json({ ok: true });
+});
+
+router.get("/team/accept", async (req: TenantRequest, res: Response) => {
   const { token } = req.query as { token?: string };
   if (!token) return res.status(400).json({ error: "token is required" });
-  const [member] = await db.select({ email: teamMembersTable.email })
-    .from(teamMembersTable).where(eq(teamMembersTable.inviteToken, token)).limit(1);
+
+  const [member] = await db.select()
+    .from(teamMembersTable)
+    .where(req.storeId
+      ? and(eq(teamMembersTable.inviteToken, token), eq(teamMembersTable.storeId, req.storeId))
+      : eq(teamMembersTable.inviteToken, token))
+    .limit(1);
+
   if (!member) return res.status(404).json({ error: "Invite not found or expired" });
-  return res.json({ ok: true, email: member.email });
+  if (member.status.toLowerCase() === "active" && !member.inviteToken) {
+    return res.status(409).json({ error: "Invite already accepted", email: member.email });
+  }
+  if (member.inviteExpiresAt && member.inviteExpiresAt < new Date()) {
+    return res.status(410).json({ error: "Invite expired" });
+  }
+
+  return res.json({
+    ok: true,
+    email: member.email,
+    name: member.name || null,
+    role: member.role || "Editor",
+    invitedBy: null,
+  });
 });
 
-router.post("/team/accept", async (req, res) => {
-  const { token, name } = req.body as { token: string; name: string };
+router.post("/team/accept", async (req: TenantRequest, res: Response) => {
+  const { token, name } = req.body as { token?: string; name?: string };
   if (!token) return res.status(400).json({ error: "token is required" });
+  const cleanName = name?.trim() || "";
+  if (!cleanName) return res.status(400).json({ error: "name is required" });
+
+  const [pendingMember] = await db.select()
+    .from(teamMembersTable)
+    .where(req.storeId
+      ? and(eq(teamMembersTable.inviteToken, token), eq(teamMembersTable.storeId, req.storeId))
+      : eq(teamMembersTable.inviteToken, token))
+    .limit(1);
+
+  if (!pendingMember) return res.status(404).json({ error: "Invite not found or expired" });
+  if (pendingMember.inviteExpiresAt && pendingMember.inviteExpiresAt < new Date()) {
+    return res.status(410).json({ error: "Invite expired" });
+  }
+
   const [member] = await db.update(teamMembersTable)
-    .set({ name, status: "Active", inviteToken: null, inviteExpiresAt: null })
-    .where(eq(teamMembersTable.inviteToken, token)).returning();
+    .set({ name: cleanName, status: "Active", inviteToken: null, inviteExpiresAt: null })
+    .where(and(eq(teamMembersTable.id, pendingMember.id), eq(teamMembersTable.storeId, pendingMember.storeId)))
+    .returning();
   if (!member) return res.status(404).json({ error: "Invite not found or expired" });
 
-  // Auto-register into usersTable as ADMIN so they can request OTP login
+  const assignedRole = (member.role || "").toLowerCase() === "owner" ? "SUPER_ADMIN" : "ADMIN";
+
+  // Auto-register into usersTable under the inviting store
   await db.insert(usersTable).values({
     id: randomUUID(),
-    name,
-    email: member.email,
-    role: "ADMIN",
+    storeId: member.storeId,
+    name: cleanName,
+    email: member.email.toLowerCase(),
+    role: assignedRole,
     passwordHash: "",
   }).onConflictDoUpdate({
-    target: usersTable.email,
-    set: { name, role: "ADMIN" }
+    target: [usersTable.storeId, usersTable.email],
+    set: { name: cleanName, role: assignedRole },
   });
 
-  return res.json({ ok: true, name: member.name });
+  return res.json({ ok: true, email: member.email, name: member.name, role: member.role });
 });
 
 const contactSchema = z.object({
@@ -1253,7 +1537,8 @@ const appointmentSchema = z.object({
   notes: z.string().optional(),
 });
 
-router.post("/appointments", validate(appointmentSchema), async (req, res) => {
+router.post("/appointments", validate(appointmentSchema), async (req: TenantRequest, res: Response) => {
+  const storeId = req.storeId!;
   const { name, email, phone, location, date, service, notes } = req.body as z.infer<typeof appointmentSchema>;
   const threadId = `appointment:${randomUUID()}`;
   try {
@@ -1266,6 +1551,7 @@ router.post("/appointments", validate(appointmentSchema), async (req, res) => {
 
     await db.insert(messagesTable).values({
       id: randomUUID(),
+      storeId,
       threadId,
       sender: "customer",
       text: formattedText,
@@ -1288,12 +1574,14 @@ router.post("/appointments", validate(appointmentSchema), async (req, res) => {
   }
 });
 
-router.post("/contact", validate(contactSchema), async (req, res) => {
+router.post("/contact", validate(contactSchema), async (req: TenantRequest, res: Response) => {
+  const storeId = req.storeId!;
   const { fullName, email, subject, message } = req.body as z.infer<typeof contactSchema>;
   const threadId = `contact:${randomUUID()}`;
   try {
     await db.insert(messagesTable).values({
       id: randomUUID(),
+      storeId,
       threadId,
       sender: "customer",
       text: `[Subject: ${subject}]\n\n${message}`,
@@ -1310,8 +1598,6 @@ router.post("/contact", validate(contactSchema), async (req, res) => {
     return res.status(500).json({ error: "Failed to submit inquiry. Please try again." });
   }
 });
-
-export default router;
 
 // Orders Bulk Operations
 router.delete("/orders/bulk", requireAdmin, async (req: TenantRequest, res: Response) => {
@@ -1450,3 +1736,5 @@ router.delete("/admin/showroom-locations/:id", requireAdmin, async (req: TenantR
     return res.status(500).json({ error: "Failed to delete showroom location" });
   }
 });
+
+export default router;

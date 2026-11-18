@@ -1202,9 +1202,9 @@ export default function AdminFacebookPage() {
                             <div className="px-4 pt-4 pb-3">
                               <div className="flex items-start justify-between mb-3">
                                 <div className="flex items-center gap-2">
-                                  <div className="w-8 h-8 rounded-full bg-[#006c49]/10 text-[#006c49] flex items-center justify-center font-bold text-xs">LB</div>
+                                  <div className="w-8 h-8 rounded-full bg-[#006c49]/10 text-[#006c49] flex items-center justify-center font-bold text-xs">FB</div>
                                   <div>
-                                    <p className="font-[Manrope] font-bold text-xs text-[#0b1c30] leading-tight">Luxe Boutique</p>
+                                    <p className="font-[Manrope] font-bold text-xs text-[#0b1c30] leading-tight">Official Store Page</p>
                                     <p className="text-[9px] text-[#7c839b] font-[Manrope]">{new Date(post.createdAt).toLocaleDateString()}</p>
                                   </div>
                                 </div>

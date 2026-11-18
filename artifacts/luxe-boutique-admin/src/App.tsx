@@ -28,6 +28,7 @@ import AdminNewsletterPage from "@/pages/admin/AdminNewsletterPage";
 import AdminSettingsPage from "@/pages/admin/AdminSettingsPage";
 import AdminTeamPage from "@/pages/admin/AdminTeamPage";
 import AdminLoginPage from "@/pages/admin/AdminLoginPage";
+import AdminRegisterPage from "@/pages/admin/AdminRegisterPage";
 import AdminAcceptInvitePage from "@/pages/admin/AdminAcceptInvitePage";
 import AdminCouponsPage from "@/pages/admin/AdminCouponsPage";
 import AdminProvidersPage from "@/pages/admin/AdminProvidersPage";
@@ -45,6 +46,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/login" component={() => <AdminLoginPage />} />
+      <Route path="/register" component={() => <AdminRegisterPage />} />
       <Route path="/accept-invite" component={() => <AdminAcceptInvitePage />} />
       <Route path="/" component={() => <AdminGuard><AdminDashboardPage /></AdminGuard>} />
       <Route path="/dashboard" component={() => <AdminGuard><AdminDashboardPage /></AdminGuard>} />

@@ -319,7 +319,7 @@ export default function AdminChatPage() {
 
   const quickReplies = [
     "Hello! How can I help you today?",
-    "Thank you for contacting Luxe Boutique! We appreciate your query. How can we assist you today?",
+    "Thank you for contacting our boutique! We appreciate your query. How can we assist you today?",
     "We offer 100% organic cashmere and silk fabrics directly imported from our family mills in Milan. Let us know if you would like a digital catalog.",
     "For all domestic orders over €150, we provide complimentary Express Delivery within 2-3 business days with tracking included.",
     "Your order has been safely prepared by our team and is currently awaiting dispatch. We will send you an automated tracking link shortly!",
@@ -591,7 +591,7 @@ export default function AdminChatPage() {
                           ) : (
                             <>
                               <div className={`text-[10px] font-bold text-slate-400 mb-1 px-1 flex items-center gap-2 ${isSelf ? "justify-end" : "justify-start"}`}>
-                                {isSelf ? "Luxe Boutique Seller" : msg.customerName}
+                                {isSelf ? "Store Seller" : msg.customerName}
                                 <span>•</span>
                                 <span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
                               </div>

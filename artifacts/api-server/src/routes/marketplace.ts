@@ -1,88 +1,8 @@
 import { Router, type Request, type Response } from "express";
-import { db, storesTable } from "@workspace/db";
-import { buildTenantUrl } from "@workspace/tenant-routing";
+import { db, storesTable, productsTable, categoriesTable, reviewsTable, appSettingsTable, ordersTable } from "@workspace/db";
+import { buildTenantUrl, validateTenantSlug, sanitizeTenantSlug } from "@workspace/tenant-routing";
 
 const router = Router();
-
-const BOUTIQUE_PROFILES: Record<string, {
-  tagline: string;
-  category: string;
-  categoryKey: string;
-  location: string;
-  heroImage: string;
-  badge: string;
-  highlights: string[];
-  rating: number;
-  established: string;
-}> = {
-  "luxe-boutique": {
-    tagline: "Haute Couture & Handcrafted Grade-A Mongolian Cashmere",
-    category: "Haute Couture & RTW",
-    categoryKey: "couture",
-    location: "New York • 5th Avenue Flagship",
-    heroImage: "https://images.unsplash.com/photo-1539533018447-63fcce2678e3?q=80&w=987&auto=format&fit=crop",
-    badge: "Flagship Maison",
-    highlights: ["Grade-A Cashmere", "Bespoke Tailoring", "White-Glove Valet"],
-    rating: 4.99,
-    established: "Est. 2018",
-  },
-  "maison-moretti": {
-    tagline: "Artisanal Tuscan Leather Goods & Goodyear Welted Footwear",
-    category: "Leather Goods & Footwear",
-    categoryKey: "leather",
-    location: "Milano, Italy • Via Montenapoleone",
-    heroImage: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?q=80&w=2070&auto=format&fit=crop",
-    badge: "Heritage Leather",
-    highlights: ["Full-Grain Alligator", "Hand-Lasted", "Tuscan Vegetable Tanned"],
-    rating: 4.97,
-    established: "Est. 1974",
-  },
-  "aurelia-jewels": {
-    tagline: "High Jewellery, Rare Coloured Gemstones & Bespoke Platinum",
-    category: "Fine Jewellery & Gems",
-    categoryKey: "jewels",
-    location: "Paris, France • Place Vendôme",
-    heroImage: "https://images.unsplash.com/photo-1515562141207-7a88fb7ce338?q=80&w=1200&auto=format&fit=crop",
-    badge: "High Joaillerie",
-    highlights: ["Ethical Diamonds", "Custom Settings", "GIA Certified"],
-    rating: 5.0,
-    established: "Est. 1928",
-  },
-  "kurogane": {
-    tagline: "Master Chronometry & Hand-Finished Titanium Horology",
-    category: "Horology & Timepieces",
-    categoryKey: "horology",
-    location: "Kyoto & Geneva • Independent Master",
-    heroImage: "https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?q=80&w=1200&auto=format&fit=crop",
-    badge: "Independent Horology",
-    highlights: ["In-House Calibre", "Urushi Dial", "COSC Certified"],
-    rating: 4.98,
-    established: "Est. 1992",
-  },
-  "atelier-celeste": {
-    tagline: "Mulberry Silk Charmeuse, Eveningwear & Delicate Knits",
-    category: "Silk & Eveningwear",
-    categoryKey: "silk",
-    location: "London, UK • Mayfair Atelier",
-    heroImage: "https://images.unsplash.com/photo-1485462537746-965f33f7f6a7?q=80&w=987&auto=format&fit=crop",
-    badge: "Couture Atelier",
-    highlights: ["100% Mulberry Silk", "Hand-Draped", "Limited Edition Drops"],
-    rating: 4.95,
-    established: "Est. 2015",
-  },
-};
-
-const DEFAULT_PROFILE = {
-  tagline: "Curated Independent Luxury Collection",
-  category: "Luxury Atelier",
-  categoryKey: "all",
-  location: "Global Atelier",
-  heroImage: "https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=1200&auto=format&fit=crop",
-  badge: "Verified Merchant",
-  highlights: ["Curated Collection", "Insured Shipping", "Concierge Support"],
-  rating: 4.95,
-  established: "Est. 2024",
-};
 
 router.get("/marketplace/stores", async (req: Request, res: Response) => {
   try {
@@ -93,38 +13,109 @@ router.get("/marketplace/stores", async (req: Request, res: Response) => {
       s.publishStatus !== "SUSPENDED"
     );
 
+    const [allSettings, allProducts, allCategories, allReviews] = await Promise.all([
+      db.select().from(appSettingsTable).catch(() => []),
+      db.select().from(productsTable).catch(() => []),
+      db.select().from(categoriesTable).catch(() => []),
+      db.select().from(reviewsTable).catch(() => []),
+    ]);
+
+    const categoryMap = new Map<string, string>();
+    allCategories.forEach((c: any) => {
+      if (c.id && c.name) categoryMap.set(c.id, c.name);
+    });
+
     const hostHeader = (req.headers["x-forwarded-host"] || req.get("host") || req.hostname) as string;
+    const isPreview = !hostHeader || hostHeader.includes("localhost") || hostHeader.endsWith(".run.app") || hostHeader.endsWith(".aistudio.app") || hostHeader.startsWith("127.0.0.1");
 
     const enriched = publishedStores.map((store: any) => {
-      const profile = BOUTIQUE_PROFILES[store.slug] || {
-        ...DEFAULT_PROFILE,
-        tagline: `${store.name} — Curated Luxury Collection`,
-      };
+      const storeSettingsRows = allSettings.filter((s: any) => s.storeId === store.id);
+      const settings = Object.fromEntries(storeSettingsRows.map((s: any) => [s.key, s.value]));
 
-      const tenantUrl = buildTenantUrl({
-        slug: store.slug,
-        customDomain: store.customDomain,
-        path: "/",
-      }, hostHeader);
+      const storeProducts = allProducts.filter((p: any) => p.storeId === store.id || p.store_id === store.id);
+      const storeReviews = allReviews.filter((r: any) => r.storeId === store.id || r.store_id === store.id);
+
+      const rating = storeReviews.length > 0
+        ? Number((storeReviews.reduce((sum: number, r: any) => sum + Number(r.rating || 5), 0) / storeReviews.length).toFixed(2))
+        : 5.0;
+
+      const firstProduct = storeProducts[0];
+      const productCategoryName = firstProduct?.categoryId ? categoryMap.get(firstProduct.categoryId) : null;
+      const categoryName = settings["brand_category"] || settings["category"] || productCategoryName || "Luxury Collection";
+
+      // Derive key for filtering
+      let categoryKey = "all";
+      const catLower = categoryName.toLowerCase();
+      if (catLower.includes("couture") || catLower.includes("rtw") || catLower.includes("wear")) categoryKey = "couture";
+      else if (catLower.includes("leather") || catLower.includes("shoe") || catLower.includes("footwear")) categoryKey = "leather";
+      else if (catLower.includes("jewel") || catLower.includes("gem") || catLower.includes("diamond")) categoryKey = "jewels";
+      else if (catLower.includes("watch") || catLower.includes("horolog") || catLower.includes("timepiece")) categoryKey = "horology";
+      else if (catLower.includes("silk") || catLower.includes("evening")) categoryKey = "silk";
+      else categoryKey = sanitizeTenantSlug(categoryName) || store.slug.toLowerCase();
+
+      const tagline = settings["brand_tagline"] || settings["tagline"] || settings["store_tagline"] ||
+        (firstProduct?.description ? firstProduct.description : `${store.name} — Handcrafted Artisanal Collection`);
+
+      const location = settings["store_location"] || settings["store_city"] || settings["brand_location"] || "Global Atelier";
+
+      const heroImage = settings["brand_hero_image"] || settings["hero_image"] || firstProduct?.imageUrl || "";
+
+      const badge = settings["brand_badge"] || (
+        store.planTier === "enterprise" ? "Flagship Maison" :
+        store.planTier === "growth" ? "Heritage Atelier" :
+        "Verified Maison"
+      );
+
+      let highlights: string[] = [];
+      if (settings["brand_highlights"]) {
+        try {
+          const parsed = JSON.parse(settings["brand_highlights"]);
+          if (Array.isArray(parsed)) highlights = parsed;
+        } catch {
+          highlights = String(settings["brand_highlights"]).split(",").map((s) => s.trim()).filter(Boolean);
+        }
+      }
+      if (highlights.length === 0 && storeProducts.length > 0) {
+        const tags = new Set<string>();
+        storeProducts.forEach((p: any) => {
+          if (p.tags) {
+            String(p.tags).split(",").forEach((t) => tags.add(t.trim()));
+          }
+        });
+        highlights = Array.from(tags).slice(0, 3);
+        if (highlights.length === 0) {
+          highlights = storeProducts.slice(0, 3).map((p: any) => p.name);
+        }
+      }
+
+      const cleanSlug = store.slug.toLowerCase().trim();
+      const customDomain = store.customDomain && store.customDomain.trim() ? store.customDomain.trim().toLowerCase() : null;
+      const canonicalDomain = customDomain || `${cleanSlug}.prigidcommerce.com`;
+      const canonicalUrl = `https://${canonicalDomain}`;
+      const previewUrl = `/?store=${encodeURIComponent(cleanSlug)}`;
 
       return {
         id: store.id,
         name: store.name,
-        slug: store.slug,
+        slug: cleanSlug,
         planTier: store.planTier,
         currency: store.currency || "USD",
-        customDomain: store.customDomain || null,
+        customDomain,
+        canonicalDomain,
+        canonicalUrl,
         isPublished: true,
-        tagline: profile.tagline,
-        category: profile.category,
-        categoryKey: profile.categoryKey,
-        location: profile.location,
-        heroImage: profile.heroImage,
-        badge: profile.badge,
-        highlights: profile.highlights,
-        rating: profile.rating,
-        established: profile.established,
-        storeUrl: tenantUrl,
+        tagline,
+        category: categoryName,
+        categoryKey,
+        location,
+        heroImage,
+        badge,
+        highlights,
+        rating,
+        established: settings["store_established"] || "Verified Atelier",
+        storeUrl: canonicalUrl,
+        previewUrl,
+        productCount: storeProducts.length,
       };
     });
 
@@ -140,19 +131,43 @@ router.get("/marketplace/stores", async (req: Request, res: Response) => {
 
 router.get("/marketplace/stats", async (_req: Request, res: Response) => {
   try {
-    const stores = await db.select().from(storesTable);
+    const [stores, products, reviews, orders] = await Promise.all([
+      db.select().from(storesTable).catch(() => []),
+      db.select().from(productsTable).catch(() => []),
+      db.select().from(reviewsTable).catch(() => []),
+      db.select().from(ordersTable).catch(() => []),
+    ]);
+
     const published = stores.filter((s: any) =>
       (s.publishStatus === "PUBLISHED" || s.isPublished === true) &&
-      s.status !== "suspended"
+      s.status !== "suspended" &&
+      s.publishStatus !== "SUSPENDED"
     );
+
+    const publishedStoreIds = new Set(published.map((s: any) => s.id));
+    const activeProducts = products.filter((p: any) => publishedStoreIds.has(p.storeId || p.store_id));
+    const activeReviews = reviews.filter((r: any) => publishedStoreIds.has(r.storeId || r.store_id));
+
+    let satisfaction = "100%";
+    if (activeReviews.length > 0) {
+      const positive = activeReviews.filter((r: any) => Number(r.rating || 5) >= 4);
+      satisfaction = ((positive.length / activeReviews.length) * 100).toFixed(1) + "%";
+    }
+
+    const destinationCountries = new Set<string>();
+    orders.forEach((o: any) => {
+      const addr = o.shippingAddress;
+      if (addr && typeof addr === "object" && addr.country) destinationCountries.add(String(addr.country).toUpperCase());
+    });
+    const uniqueDestinationsCount = Math.max(destinationCountries.size, published.length);
 
     return res.json({
       success: true,
       stats: {
-        totalMaisons: Math.max(published.length, 5),
-        handcraftedPieces: 148,
-        deliveryCountries: 74,
-        clientSatisfaction: "99.4%",
+        totalMaisons: published.length,
+        handcraftedPieces: activeProducts.length,
+        deliveryCountries: uniqueDestinationsCount,
+        clientSatisfaction: satisfaction,
       },
     });
   } catch (err: any) {

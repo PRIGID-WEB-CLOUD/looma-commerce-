@@ -1,8 +1,9 @@
+import { randomUUID } from "crypto";
 import { Router } from "express";
 import { requireAdmin } from "../middleware/requireAdmin";
 import { db, appSettingsTable } from "@workspace/db";
 import { addEvent } from "./channels";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { type TenantRequest } from "../middleware/tenantContext";
 
 const router = Router();
@@ -10,8 +11,11 @@ const router = Router();
 // Public config for storefront PayPal checkout rendering (SDK client ID)
 router.get("/payments/paypal/public-config", async (req: TenantRequest, res) => {
   const storeId = req.storeId;
+  if (!storeId) {
+    return res.status(404).json({ error: "Store context not found." });
+  }
   try {
-    const rows = await db.select().from(appSettingsTable).where(eq(appSettingsTable.storeId, storeId || "store-main"));
+    const rows = await db.select().from(appSettingsTable).where(eq(appSettingsTable.storeId, storeId));
     const settings = Object.fromEntries(rows.map((r) => [r.key, r.value]));
 
     return res.json({
@@ -70,7 +74,7 @@ router.post("/payments/paypal/config", async (req: TenantRequest, res) => {
       if (value !== undefined) {
         await db
           .insert(appSettingsTable)
-          .values({ key, value, storeId, updatedAt: new Date() })
+          .values({ id: randomUUID(), key, value, storeId, updatedAt: new Date() })
           .onConflictDoUpdate({
             target: [appSettingsTable.storeId, appSettingsTable.key],
             set: { value, updatedAt: new Date() },
